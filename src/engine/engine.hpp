@@ -234,6 +234,15 @@ public:
     [[nodiscard]] const Book* book(StockLocate loc) const { return books_[loc].get(); }
     [[nodiscard]] Book* book(StockLocate loc) { return books_[loc].get(); }
 
+    // --- snapshot/restore support (engine/snapshot.hpp) ------------------
+    // Raw state injection for rebuilding an engine from a snapshot; not for
+    // normal operation.
+    void restore_phase(MarketPhase p) { phase_ = p; }
+    void restore_trading_state(StockLocate loc, char s) { trading_state_[loc] = s; }
+    void restore_symbol(StockLocate loc, const itch::Stock& s) { symbols_[loc] = s; }
+    Stats& mutable_stats() { return stats_; }
+    Book& ensure_book(StockLocate loc) { return book_for(loc); }
+
 private:
     Book& book_for(StockLocate loc) {
         auto& slot = books_[loc];

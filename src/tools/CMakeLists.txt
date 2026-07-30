@@ -22,3 +22,6 @@ target_link_libraries(mold_send PRIVATE ob::lib ob::warnings)
 
 add_executable(mold_recv mold_recv.cpp)
 target_link_libraries(mold_recv PRIVATE ob::lib ob::warnings)
+
+add_executable(snapshot snapshot.cpp)
+target_link_libraries(snapshot PRIVATE ob::lib ob::warnings)
