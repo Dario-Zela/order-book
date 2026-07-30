@@ -76,7 +76,7 @@ CMake ≥ 3.24 and a C++20 compiler. Presets: `debug`, `release`, `asan`,
 
 ```sh
 cmake --preset release && cmake --build --preset release
-ctest --preset release          # 95 tests
+ctest --preset release          # 116 tests
 ```
 
 Tools (all under `build/release/src/tools/`):
@@ -105,7 +105,7 @@ src/engine   reconstruct engine, matcher, event pipeline, audit
 src/spsc     the ring
 src/tools    the CLIs above
 fuzz         libFuzzer targets (parser + hostile book driver)
-tests        95 tests: unit, property, differential, stress
+tests        116 tests: unit, property, differential, stress
 ```
 
 ## Networking and scaling (the stretch goals, delivered)
@@ -125,10 +125,33 @@ over per-shard SPSC rings) reconstructs the entire 423M-message day in
 **21 seconds** — the design target of "full day under a minute" with room to
 spare, and identical volumes to the single-thread run.
 
+## The experiments, run
+
+Every design decision the doc flagged as "measure, don't assert" got its
+measurement. All numbers from the same busy M-series laptop, interleaved
+A/B where comparison matters (which cancels drift); absolute values are
+lower bounds, relative ones are trustworthy.
+
+| Experiment | Result | Verdict |
+|---|---|---|
+| `std::map` book vs flat book (same 93.3M-msg input) | 3.80 vs **7.69M msgs/s** | flat wins 2.02×; cache-miss attribution awaits the Linux perf run |
+| Order at 64B `alignas(64)` vs naturally-packed 40B | medians 7.13 vs 7.09M msgs/s | **a wash** — workload-dependent, exactly as the doc suspected; 64B stays for layout predictability |
+| Hot/cold Order field splitting | — | **declined on evidence**: if 40-vs-64B doesn't move, field splitting has no headroom |
+| SPSC cached indices on vs off | 26.9 vs 22.5M items/s | **+19%** for the cached-index optimisation |
+| Best-price: linear scan vs two-level bitmap (paced, 60×) | p50 −8%, p90 −14% for bitmap | mid-percentiles favour the bitmap; the designed p99.9 story is **unresolved** under host load — quiet-machine pass pending |
+| Band rebase off vs on (full day) | 3.84 vs **5.90M msgs/s** | +54%; junk-anchor failure fixed, residual overflow is a data property |
+| Id map vs `std::unordered_map` (churned-sequential keys) | find 11.8 vs 12.6ns; churn 54.6 vs 321ns | finds are a wash; **churn is 5.9×** — and churn is what a trading day is made of |
+| Match mode submit cost | ~11ns rest+fill; ~511ns 5-level IOC sweep | microbench conditions (hot caches); labelled |
+
 ## Honest limitations
 
 No persistence or risk checks, and the only order types are limit and IOC.
 Prices stay in ITCH's integer ticks end to end — no floating point in the
-book, ever. Huge-page backing exists but its dTLB effect is unmeasured
-until the canonical Linux perf run. See the design doc's non-goals list;
-scope discipline was a feature of this project, not an accident.
+book, ever. Huge-page backing exists (with an OB_NO_HUGEPAGES A/B switch
+and a dispatchable CI job measuring the dTLB delta as mechanism evidence)
+but its effect is unclaimed until the canonical Linux perf run. The
+quiet-machine benchmark pass and bare-metal Linux numbers remain the two
+open items — everything else in the design doc's roadmap, stretch goals
+included, has shipped: MoldUDP64 dual-feed replay, sharding, snapshot +
+restore, the band rebase, and the full experiments table above. Scope
+discipline was a feature of this project, not an accident.
