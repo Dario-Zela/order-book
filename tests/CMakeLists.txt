@@ -25,6 +25,8 @@ add_executable(ob_tests
   test_histogram.cpp
   test_audit.cpp
   test_bitmap.cpp
+  test_mold.cpp
+  test_mold_udp.cpp
 )
 target_link_libraries(ob_tests PRIVATE ob::lib ob::warnings Catch2::Catch2WithMain)
 catch_discover_tests(ob_tests)

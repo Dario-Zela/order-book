@@ -2,6 +2,7 @@
 # plumbing). ob::lib carries the include dir plus the out-of-line TUs.
 add_library(ob_lib STATIC
   itch/mmap_file.cpp
+  net/udp.cpp
 )
 add_library(ob::lib ALIAS ob_lib)
 target_include_directories(ob_lib PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})

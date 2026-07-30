@@ -117,18 +117,32 @@ public:
     [[nodiscard]] const Stats& stats() const noexcept { return stats_; }
     [[nodiscard]] std::size_t offset() const noexcept { return pos_; }
 
+    // Dispatch one already-unframed message — MoldUDP64 blocks are bare ITCH
+    // messages, so the network receiver feeds them here (same policy: never
+    // crash, unknown/malformed go to the visitor's handlers).
+    template <typename V>
+    static void dispatch_one(std::span<const std::byte> m, V& v) {
+        Stats sink;
+        dispatch_impl(m, v, sink);
+    }
+
 private:
     template <typename V>
     void dispatch(std::span<const std::byte> m, V& v) {
+        dispatch_impl(m, v, stats_);
+    }
+
+    template <typename V>
+    static void dispatch_impl(std::span<const std::byte> m, V& v, Stats& stats) {
         const char type = static_cast<char>(m[0]);
         const std::size_t expect = wire_size(type);
         if (expect == 0) {
-            ++stats_.unknown;
+            ++stats.unknown;
             v.on_unknown(type, m);
             return;
         }
         if (m.size() != expect) {
-            ++stats_.malformed;
+            ++stats.malformed;
             v.on_malformed(type, m);
             return;
         }
@@ -153,7 +167,7 @@ private:
             case 'F': {
                 Side side{};
                 if (!detail::decode_side(p[19], side)) {
-                    ++stats_.malformed;
+                    ++stats.malformed;
                     v.on_malformed(type, m);
                     return;
                 }
@@ -199,7 +213,7 @@ private:
             case 'P': {
                 Side side{};
                 if (!detail::decode_side(p[19], side)) {
-                    ++stats_.malformed;
+                    ++stats.malformed;
                     v.on_malformed(type, m);
                     return;
                 }

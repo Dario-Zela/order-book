@@ -16,3 +16,9 @@ target_link_libraries(differential PRIVATE ob::lib ob::warnings)
 
 add_executable(golden golden.cpp)
 target_link_libraries(golden PRIVATE ob::lib ob::warnings)
+
+add_executable(mold_send mold_send.cpp)
+target_link_libraries(mold_send PRIVATE ob::lib ob::warnings)
+
+add_executable(mold_recv mold_recv.cpp)
+target_link_libraries(mold_recv PRIVATE ob::lib ob::warnings)
