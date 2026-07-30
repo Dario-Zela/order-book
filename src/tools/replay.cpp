@@ -34,8 +34,9 @@ using ob::engine::BookEvent;
 
 struct FlatFactory {
     BookResources* res;
+    BandConfig cfg;
     std::unique_ptr<FlatBook> operator()(StockLocate loc) const {
-        return std::make_unique<FlatBook>(*res, loc, BandConfig{});
+        return std::make_unique<FlatBook>(*res, loc, cfg);
     }
 };
 
@@ -97,15 +98,15 @@ void report(const FlatEngine& eng, const BookResources& res, const ob::itch::Par
                 static_cast<double>(level_mem) / 1e6,
                 static_cast<unsigned long long>(growths),
                 static_cast<unsigned long long>(overflow));
-    std::printf("best repairs    %llu scans, %.2f mean steps\n",
+    std::printf("best repairs    %llu scans, %.2f mean steps (0 = bitmap mode)\n",
                 static_cast<unsigned long long>(repairs),
                 repairs > 0 ? static_cast<double>(repair_steps) / static_cast<double>(repairs)
                             : 0.0);
 }
 
-int run_single(const ob::itch::MmapFile& file, bool audit) {
+int run_single(const ob::itch::MmapFile& file, bool audit, const BandConfig& bc) {
     BookResources res(kExpectedLiveOrders);
-    FlatEngine eng({}, FlatFactory{&res});
+    FlatEngine eng({}, FlatFactory{&res, bc});
     ob::itch::Parser parser(file.bytes());
     const auto t0 = std::chrono::steady_clock::now();
     std::uint64_t msgs = 0;
@@ -132,9 +133,9 @@ int run_single(const ob::itch::MmapFile& file, bool audit) {
     return 0;
 }
 
-int run_piped(const ob::itch::MmapFile& file) {
+int run_piped(const ob::itch::MmapFile& file, const BandConfig& bc) {
     BookResources res(kExpectedLiveOrders);
-    FlatEngine eng({}, FlatFactory{&res});
+    FlatEngine eng({}, FlatFactory{&res, bc});
     auto ring = std::make_unique<ob::spsc::SpscRing<BookEvent, 1u << 16>>();
     std::atomic<bool> done{false};
 
@@ -173,24 +174,27 @@ int main(int argc, char** argv) {
     const char* path = nullptr;
     int threads = 2;
     bool audit = false;
+    BandConfig bc{};
     for (int i = 1; i < argc; ++i) {
         if (std::strncmp(argv[i], "--threads=", 10) == 0) {
             threads = std::atoi(argv[i] + 10);
         } else if (std::strcmp(argv[i], "--audit") == 0) {
             audit = true;
+        } else if (std::strcmp(argv[i], "--bitmap") == 0) {
+            bc.use_bitmap = true;
         } else {
             path = argv[i];
         }
     }
     if (path == nullptr || (threads != 1 && threads != 2) || (audit && threads != 1)) {
-        std::fprintf(stderr, "usage: %s <itch-file> [--threads=1|2] [--audit]\n"
+        std::fprintf(stderr, "usage: %s <itch-file> [--threads=1|2] [--audit] [--bitmap]\n"
                              "       (--audit implies --threads=1)\n",
                      argv[0]);
         return 2;
     }
     try {
         const ob::itch::MmapFile file(path);
-        return threads == 1 ? run_single(file, audit) : run_piped(file);
+        return threads == 1 ? run_single(file, audit, bc) : run_piped(file, bc);
     } catch (const std::exception& e) {
         std::fprintf(stderr, "error: %s\n", e.what());
         return 1;

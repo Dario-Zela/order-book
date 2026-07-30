@@ -52,8 +52,9 @@ using ob::engine::BookEvent;
 
 struct FlatFactory {
     BookResources* res;
+    BandConfig band_cfg;
     std::unique_ptr<FlatBook> operator()(StockLocate loc) const {
-        return std::make_unique<FlatBook>(*res, loc, BandConfig{});
+        return std::make_unique<FlatBook>(*res, loc, band_cfg);
     }
 };
 using FlatEngine = ob::engine::Engine<FlatBook, ob::book::NullListener, FlatFactory>;
@@ -68,6 +69,7 @@ struct Config {
     double warmup_secs = 5.0;  // wall-clock, unrecorded, after pacing starts
     std::uint64_t max_msgs = 0;  // 0 = all
     int runs = 5;                // throughput mode only
+    BandConfig band{};
 };
 
 // Maps event time to intended wall arrival once pacing is armed.
@@ -114,7 +116,7 @@ int run_throughput(const ob::itch::MmapFile& file, const Config& cfg) {
     double best = 0;
     for (int r = 0; r < cfg.runs; ++r) {
         BookResources res(kExpectedLiveOrders);
-        FlatEngine eng({}, FlatFactory{&res});
+        FlatEngine eng({}, FlatFactory{&res, cfg.band});
         ob::itch::Parser parser(file.bytes());
         const auto t0 = std::chrono::steady_clock::now();
         std::uint64_t msgs = 0;
@@ -195,7 +197,7 @@ int run_paced(const ob::itch::MmapFile& file, const Config& cfg) {
                 "                after open discarded as warmup\n",
                 cfg.speed, cfg.threads, cfg.warmup_secs);
     BookResources res(kExpectedLiveOrders);
-    FlatEngine eng({}, FlatFactory{&res});
+    FlatEngine eng({}, FlatFactory{&res, cfg.band});
     LogHistogram hist;
     const std::uint64_t clock_cost = ob::clock_overhead_ns();
     std::uint64_t paced_msgs = 0;
@@ -277,6 +279,8 @@ int main(int argc, char** argv) {
             cfg.max_msgs = std::strtoull(argv[i] + 11, nullptr, 10);
         } else if (std::strncmp(argv[i], "--runs=", 7) == 0) {
             cfg.runs = std::atoi(argv[i] + 7);
+        } else if (std::strcmp(argv[i], "--bitmap") == 0) {
+            cfg.band.use_bitmap = true;
         } else {
             cfg.path = argv[i];
         }
