@@ -23,6 +23,14 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Free runner disk + prepare data mount
+        # / has ~9GB free after the 5.6GB gz; the 13GB raw file lives on
+        # /mnt (the runner's large temp disk) and preinstalled bloat goes.
+        run: |
+          sudo rm -rf /usr/local/lib/android /usr/share/dotnet
+          sudo mkdir -p /mnt/itch && sudo chown "$(whoami)" /mnt/itch
+          df -h / /mnt
+
       - name: Install ninja
         run: sudo apt-get update && sudo apt-get install -y ninja-build
 
@@ -41,11 +49,11 @@ jobs:
             "https://emi.nasdaq.com/ITCH/Nasdaq%20ITCH/01302020.NASDAQ_ITCH50.gz"
           ls -l data/
 
-      - name: Decompress (gzip CRC is the integrity check)
+      - name: Decompress to /mnt (gzip CRC is the integrity check)
         run: |
-          df -h .
-          gunzip -k data/01302020.NASDAQ_ITCH50.gz
-          ls -l data/
+          gunzip -kc data/01302020.NASDAQ_ITCH50.gz > /mnt/itch/01302020.NASDAQ_ITCH50
+          ls -l /mnt/itch/
+          df -h / /mnt
 
       - name: Build (release, portable flags for CI)
         env:
@@ -57,27 +65,27 @@ jobs:
 
       - name: Per-type counts match the pinned day exactly
         run: |
-          ./build/release/src/tools/itch_count data/01302020.NASDAQ_ITCH50 | tee counts.txt
+          ./build/release/src/tools/itch_count /mnt/itch/01302020.NASDAQ_ITCH50 | tee counts.txt
           grep -q "total 423285709  (unknown 4251070, malformed 0)" counts.txt
 
       - name: Slice first hour (dev-loop artifact, deterministic)
         run: |
-          ./build/release/src/tools/itch_slice data/01302020.NASDAQ_ITCH50 \
-            data/first_hour.itch --until=10:30
+          ./build/release/src/tools/itch_slice /mnt/itch/01302020.NASDAQ_ITCH50 \
+            /mnt/itch/first_hour.itch --until=10:30
 
       - name: Golden check (flat book vs committed oracle snapshots)
         run: |
-          ./build/release/src/tools/golden check data/first_hour.itch \
+          ./build/release/src/tools/golden check /mnt/itch/first_hour.itch \
             tests/goldens/01302020_first_hour.txt \
             --every=10000000 --top=20 --depth=10
 
       - name: Full-day differential (flat book vs reference oracle)
         run: |
-          ./build/release/src/tools/differential data/01302020.NASDAQ_ITCH50
+          ./build/release/src/tools/differential /mnt/itch/01302020.NASDAQ_ITCH50
 
       - name: Execution-at-front audit (§9.3)
         run: |
-          ./build/release/src/tools/replay data/01302020.NASDAQ_ITCH50 \
+          ./build/release/src/tools/replay /mnt/itch/01302020.NASDAQ_ITCH50 \
             --threads=1 --audit | tee audit.txt
           # Threshold set from the measured baseline (98.53% on 01302020;
           # the gap is dominated by price-improved C executions, which
