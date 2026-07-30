@@ -11,5 +11,7 @@ FetchContent_MakeAvailable(googlebenchmark)
 
 add_executable(ob_bench
   bench_id_map.cpp
+  bench_spsc.cpp
+  bench_match.cpp
 )
 target_link_libraries(ob_bench PRIVATE ob::lib ob::warnings benchmark::benchmark_main)

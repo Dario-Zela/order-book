@@ -5,6 +5,7 @@
 // This is the slow nightly/local job — the unit differential over synthetic
 // hostile streams stays in the test suite.
 
+#include <chrono>
 #include <cstdint>
 #include <cstdio>
 #include <exception>
@@ -57,17 +58,29 @@ int main(int argc, char** argv) {
         std::printf("replaying reference (std::map oracle)...\n");
         RefEngine ref;
         {
+            const auto t0 = std::chrono::steady_clock::now();
             ob::itch::Parser p(file.bytes());
             const auto n = p.run(ref);
-            std::printf("  %llu messages\n", static_cast<unsigned long long>(n));
+            const double secs =
+                std::chrono::duration<double>(std::chrono::steady_clock::now() - t0)
+                    .count();
+            std::printf("  %llu messages, %.2f s (%.2fM msgs/s)\n",
+                        static_cast<unsigned long long>(n), secs,
+                        static_cast<double>(n) / secs / 1e6);
         }
         std::printf("replaying flat book...\n");
         BookResources res(1u << 22);
         FlatEngine flat({}, FlatFactory{&res});
         {
+            const auto t0 = std::chrono::steady_clock::now();
             ob::itch::Parser p(file.bytes());
             const auto n = p.run(flat);
-            std::printf("  %llu messages\n", static_cast<unsigned long long>(n));
+            const double secs =
+                std::chrono::duration<double>(std::chrono::steady_clock::now() - t0)
+                    .count();
+            std::printf("  %llu messages, %.2f s (%.2fM msgs/s)\n",
+                        static_cast<unsigned long long>(n), secs,
+                        static_cast<double>(n) / secs / 1e6);
         }
 
         // Engine counters must agree exactly.

@@ -17,7 +17,15 @@
 
 namespace ob::book {
 
+// The §5.2 experiment: OB_ORDER_PACKED drops the cache-line alignment so
+// Orders pack naturally (40B, ~1.6 per line, sometimes straddling) instead
+// of padding to exactly one line. Which wins is workload-dependent — that's
+// why it's a build flag and a measured A/B, not an assertion.
+#if defined(OB_ORDER_PACKED)
+struct Order {
+#else
 struct alignas(64) Order {
+#endif
     OrderId id = 0;          // ITCH order reference number
     Price price = 0;
     Qty remaining = 0;
@@ -27,7 +35,11 @@ struct alignas(64) Order {
     Order* prev = nullptr;
 };
 
+#if defined(OB_ORDER_PACKED)
+static_assert(sizeof(Order) == 40, "naturally packed variant");
+#else
 static_assert(sizeof(Order) == 64, "target: exactly one cache line (§5.2)");
+#endif
 static_assert(std::is_trivially_destructible_v<Order>, "pooled, never destroyed");
 
 struct PriceLevel {

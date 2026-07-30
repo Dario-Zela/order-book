@@ -43,7 +43,10 @@ inline void cpu_relax() noexcept {
 #endif
 }
 
-template <typename T, std::size_t N>
+// kCacheIndices=false disables the cached-index optimisation (every
+// space/empty check reads the other side's atomic) — the §7 experiment
+// variant; measured, not asserted.
+template <typename T, std::size_t N, bool kCacheIndices = true>
 class SpscRing {
     static_assert((N & (N - 1)) == 0 && N >= 2, "N must be a power of two");
     static_assert(std::is_trivially_copyable_v<T>, "slots are raw copies");
@@ -58,7 +61,7 @@ public:
 
     [[nodiscard]] bool try_push(const T& v) noexcept {
         const std::uint64_t t = prod_.tail.load(std::memory_order_relaxed);
-        if (t - prod_.cached_head == N) {
+        if (!kCacheIndices || t - prod_.cached_head == N) {
             prod_.cached_head = cons_.head.load(std::memory_order_acquire);
             if (t - prod_.cached_head == N) return false;  // genuinely full
         }
@@ -84,7 +87,7 @@ public:
 
     [[nodiscard]] bool try_pop(T& out) noexcept {
         const std::uint64_t h = cons_.head.load(std::memory_order_relaxed);
-        if (h == cons_.cached_tail) {
+        if (!kCacheIndices || h == cons_.cached_tail) {
             cons_.cached_tail = prod_.tail.load(std::memory_order_acquire);
             if (h == cons_.cached_tail) return false;  // genuinely empty
         }
@@ -96,7 +99,7 @@ public:
     // Batch pop: one acquire + one release amortised over up to max_n slots.
     std::size_t pop_n(T* out, std::size_t max_n) noexcept {
         const std::uint64_t h = cons_.head.load(std::memory_order_relaxed);
-        std::uint64_t avail = cons_.cached_tail - h;
+        std::uint64_t avail = kCacheIndices ? cons_.cached_tail - h : 0;
         if (avail == 0) {
             cons_.cached_tail = prod_.tail.load(std::memory_order_acquire);
             avail = cons_.cached_tail - h;

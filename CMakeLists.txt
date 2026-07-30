@@ -8,6 +8,10 @@ set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
 option(OB_BUILD_TESTS "Build unit tests" ON)
 option(OB_BUILD_BENCH "Build benchmarks" OFF)
+option(OB_ORDER_PACKED "§5.2 experiment: naturally-packed 40B Order instead of 64B alignas" OFF)
+if(OB_ORDER_PACKED)
+  add_compile_definitions(OB_ORDER_PACKED)
+endif()
 
 # Scoped to our targets (ob::warnings) so FetchContent deps build clean.
 add_library(ob_warnings INTERFACE)
