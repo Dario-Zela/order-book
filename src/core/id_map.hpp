@@ -15,6 +15,7 @@
 #include <cstdint>
 #include <vector>
 
+#include "core/huge_alloc.hpp"
 #include "core/types.hpp"
 
 namespace ob {
@@ -152,7 +153,7 @@ private:
     }
 
     void grow() {
-        std::vector<Slot> old = std::move(slots_);
+        auto old = std::move(slots_);
         slots_.assign(old.size() * 2, Slot{});
         max_probe_ = 0;
         for (Slot& s : old) {
@@ -163,7 +164,7 @@ private:
         }
     }
 
-    std::vector<Slot> slots_;
+    std::vector<Slot, HugeAlloc<Slot>> slots_;
     std::size_t size_ = 0;
     std::uint64_t growths_ = 0;
     std::uint8_t max_probe_ = 0;

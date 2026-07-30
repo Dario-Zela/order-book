@@ -173,16 +173,112 @@ int run_piped(const ob::itch::MmapFile& file, const BandConfig& bc) {
     return 0;
 }
 
+// Multi-symbol sharding (DESIGN §11 stretch): one parse/route thread, N
+// engine threads each owning a locate partition (locate % N) behind its own
+// SPSC ring. Per-shard BookResources stay thread-private — correct because
+// each locate lands on exactly one shard and ITCH refs are day-unique, so
+// the per-shard id maps see disjoint key sets. System events broadcast to
+// every shard (market phase is global state).
+int run_sharded(const ob::itch::MmapFile& file, int nshards, const BandConfig& bc) {
+    using Ring = ob::spsc::SpscRing<BookEvent, 1u << 15>;
+    std::vector<std::unique_ptr<Ring>> rings;
+    std::vector<std::unique_ptr<BookResources>> resources;
+    std::vector<std::unique_ptr<FlatEngine>> engines;
+    for (int i = 0; i < nshards; ++i) {
+        rings.push_back(std::make_unique<Ring>());
+        resources.push_back(
+            std::make_unique<BookResources>(kExpectedLiveOrders / static_cast<unsigned>(nshards)));
+        engines.push_back(
+            std::make_unique<FlatEngine>(ob::book::NullListener{},
+                                         FlatFactory{resources.back().get(), bc}));
+    }
+    std::atomic<bool> done{false};
+
+    ob::itch::Parser parser(file.bytes());
+    const auto t0 = std::chrono::steady_clock::now();
+    std::vector<std::thread> consumers;
+    std::vector<std::uint64_t> applied(static_cast<std::size_t>(nshards), 0);
+    for (int i = 0; i < nshards; ++i) {
+        consumers.emplace_back([&, i] {
+            Ring& ring = *rings[static_cast<std::size_t>(i)];
+            FlatEngine& eng = *engines[static_cast<std::size_t>(i)];
+            BookEvent batch[256];
+            std::uint64_t n_applied = 0;
+            while (true) {
+                const std::size_t n = ring.pop_n(batch, 256);
+                for (std::size_t k = 0; k < n; ++k) ob::engine::apply_event(batch[k], eng);
+                n_applied += n;
+                if (n == 0) {
+                    if (done.load(std::memory_order_acquire) && ring.pop_n(batch, 1) == 0)
+                        break;
+                    ob::spsc::cpu_relax();
+                }
+            }
+            applied[static_cast<std::size_t>(i)] = n_applied;
+        });
+    }
+
+    {
+        auto emit = [&](const BookEvent& ev) {
+            if (ev.kind == ob::engine::EventKind::system) {
+                for (auto& r : rings) r->push(ev);  // phase is global
+            } else {
+                rings[ev.locate % static_cast<unsigned>(nshards)]->push(ev);
+            }
+        };
+        ob::engine::EventEncoder<decltype(emit)> enc(emit);
+        parser.run(enc);
+        done.store(true, std::memory_order_release);
+    }
+    for (auto& t : consumers) t.join();
+    const auto t1 = std::chrono::steady_clock::now();
+    const double secs = std::chrono::duration<double>(t1 - t0).count();
+
+    std::uint64_t total = 0;
+    FlatEngine::Stats merged{};
+    for (int i = 0; i < nshards; ++i) {
+        total += applied[static_cast<std::size_t>(i)];
+        const auto& s = engines[static_cast<std::size_t>(i)]->stats();
+        merged.unknown_ref += s.unknown_ref;
+        merged.clamped += s.clamped;
+        merged.volume_lit += s.volume_lit;
+        merged.volume_hidden += s.volume_hidden;
+        merged.volume_cross += s.volume_cross;
+    }
+    std::printf("\n-- sharded replay ------------------------------------------\n");
+    std::printf("shards          %d engine threads + 1 parse/route thread\n", nshards);
+    std::printf("events          %llu applied (%.2fM/s over %.2f s)\n",
+                static_cast<unsigned long long>(total),
+                static_cast<double>(total) / secs / 1e6, secs);
+    std::printf("volume          lit %llu, hidden %llu, cross %llu  <- must match unsharded\n",
+                static_cast<unsigned long long>(merged.volume_lit),
+                static_cast<unsigned long long>(merged.volume_hidden),
+                static_cast<unsigned long long>(merged.volume_cross));
+    std::printf("engine          unknown_ref %llu, clamped %llu\n",
+                static_cast<unsigned long long>(merged.unknown_ref),
+                static_cast<unsigned long long>(merged.clamped));
+    for (int i = 0; i < nshards; ++i) {
+        std::printf("shard %d         %llu events, ring occupancy hw %llu\n", i,
+                    static_cast<unsigned long long>(applied[static_cast<std::size_t>(i)]),
+                    static_cast<unsigned long long>(
+                        rings[static_cast<std::size_t>(i)]->occupancy_high_water()));
+    }
+    return 0;
+}
+
 }  // namespace
 
 int main(int argc, char** argv) {
     const char* path = nullptr;
     int threads = 2;
+    int shards = 0;
     bool audit = false;
     BandConfig bc{};
     for (int i = 1; i < argc; ++i) {
         if (std::strncmp(argv[i], "--threads=", 10) == 0) {
             threads = std::atoi(argv[i] + 10);
+        } else if (std::strncmp(argv[i], "--shards=", 9) == 0) {
+            shards = std::atoi(argv[i] + 9);
         } else if (std::strcmp(argv[i], "--audit") == 0) {
             audit = true;
         } else if (std::strcmp(argv[i], "--bitmap") == 0) {
@@ -195,14 +291,17 @@ int main(int argc, char** argv) {
             path = argv[i];
         }
     }
-    if (path == nullptr || (threads != 1 && threads != 2) || (audit && threads != 1)) {
-        std::fprintf(stderr, "usage: %s <itch-file> [--threads=1|2] [--audit] [--bitmap]\n"
-                             "       (--audit implies --threads=1)\n",
+    if (path == nullptr || (threads != 1 && threads != 2) || (audit && threads != 1) ||
+        shards < 0 || shards > 64) {
+        std::fprintf(stderr,
+                     "usage: %s <itch-file> [--threads=1|2 | --shards=N] [--audit] [--bitmap]\n"
+                     "       (--audit implies --threads=1)\n",
                      argv[0]);
         return 2;
     }
     try {
         const ob::itch::MmapFile file(path);
+        if (shards > 0) return run_sharded(file, shards, bc);
         return threads == 1 ? run_single(file, audit, bc) : run_piped(file, bc);
     } catch (const std::exception& e) {
         std::fprintf(stderr, "error: %s\n", e.what());

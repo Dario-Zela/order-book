@@ -10,10 +10,11 @@
 
 #include <cstddef>
 #include <cstdint>
-#include <memory>
 #include <new>
 #include <type_traits>
 #include <vector>
+
+#include "core/huge_alloc.hpp"
 
 namespace ob {
 
@@ -72,13 +73,13 @@ private:
 
     void add_slab(std::size_t count) {
         if (count == 0) count = 1;
-        slabs_.push_back(std::make_unique<Storage[]>(count));
-        bump_ = reinterpret_cast<T*>(slabs_.back().get());
+        slabs_.emplace_back(count);  // huge-page-backed on Linux (2MB+ slabs)
+        bump_ = reinterpret_cast<T*>(slabs_.back().data());
         slab_end_ = bump_ + count;
         capacity_ += count;
     }
 
-    std::vector<std::unique_ptr<Storage[]>> slabs_;
+    std::vector<std::vector<Storage, HugeAlloc<Storage>>> slabs_;
     T* bump_ = nullptr;
     T* slab_end_ = nullptr;
     FreeNode* free_head_ = nullptr;
