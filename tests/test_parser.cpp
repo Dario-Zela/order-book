@@ -7,58 +7,11 @@
 #include <vector>
 
 #include "itch/parser.hpp"
+#include "wire.hpp"
 
 namespace {
 
-// Builds framed ITCH wire data: each msg() call appends fields, end_msg()
-// back-patches the 2-byte big-endian length prefix.
-class Wire {
-public:
-    Wire& msg() {
-        len_at_ = buf_.size();
-        buf_.push_back(std::byte{0});
-        buf_.push_back(std::byte{0});
-        return *this;
-    }
-    Wire& end_msg() {
-        const auto len = buf_.size() - len_at_ - 2;
-        buf_[len_at_] = std::byte(len >> 8);
-        buf_[len_at_ + 1] = std::byte(len & 0xFF);
-        return *this;
-    }
-    Wire& u8(std::uint8_t v) {
-        buf_.push_back(std::byte{v});
-        return *this;
-    }
-    Wire& ch(char c) { return u8(static_cast<std::uint8_t>(c)); }
-    Wire& u16(std::uint16_t v) { return be(v, 2); }
-    Wire& u32(std::uint32_t v) { return be(v, 4); }
-    Wire& u48(std::uint64_t v) { return be(v, 6); }
-    Wire& u64(std::uint64_t v) { return be(v, 8); }
-    Wire& str(std::string_view s) {
-        for (char c : s) ch(c);
-        return *this;
-    }
-    // ITCH header minus the type byte
-    Wire& hdr(std::uint16_t locate, std::uint16_t tracking, std::uint64_t ts) {
-        return u16(locate).u16(tracking).u48(ts);
-    }
-    Wire& raw_u16(std::uint16_t v) {  // for hand-writing bad length prefixes
-        return be(v, 2);
-    }
-    [[nodiscard]] std::span<const std::byte> bytes() const { return buf_; }
-    [[nodiscard]] std::vector<std::byte> take() && { return std::move(buf_); }
-
-private:
-    Wire& be(std::uint64_t v, int n) {
-        for (int i = n - 1; i >= 0; --i) {
-            buf_.push_back(std::byte((v >> (8 * i)) & 0xFF));
-        }
-        return *this;
-    }
-    std::vector<std::byte> buf_;
-    std::size_t len_at_ = 0;
-};
+using obtest::Wire;
 
 // Records everything it sees; tests assert against the recorded messages
 // plus the parser's own stats.

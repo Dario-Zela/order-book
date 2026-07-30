@@ -1,0 +1,190 @@
+#pragma once
+
+// Reconstruct-mode engine (DESIGN §6): applies ITCH events verbatim to
+// per-symbol books. The exchange already matched — this mode contains ZERO
+// matching logic, or crossed pre-open books (§4.1) would silently corrupt
+// state. It is an ITCH visitor: parser -> Engine -> Book -> Listener, all
+// dispatch resolved at compile time.
+//
+// Symbol dispatch (§4): the uint16 stock locate indexes a flat array of
+// Book* — the exchange hands you a perfect hash; use it. Books are created
+// lazily on first touch, so resident memory tracks ACTIVE symbols.
+
+#include <array>
+#include <cstdint>
+#include <memory>
+#include <vector>
+
+#include "book/listener.hpp"
+#include "core/types.hpp"
+#include "itch/messages.hpp"
+#include "itch/parser.hpp"
+
+namespace ob::engine {
+
+enum class MarketPhase : std::uint8_t { pre_open, open, closed };
+
+template <typename Book, typename Listener = book::NullListener>
+class Engine : public itch::NullVisitor {
+public:
+    static constexpr std::size_t kMaxLocates = 65536;
+
+    struct Stats {
+        std::uint64_t unknown_ref = 0;    // count-and-skip per §4.1
+        std::uint64_t duplicate_ref = 0;
+        std::uint64_t clamped = 0;        // exec/cancel qty exceeded remaining
+        std::uint64_t volume_lit = 0;     // E + printable C, shares
+        std::uint64_t volume_hidden = 0;  // P prints (non-displayed liquidity)
+        std::uint64_t volume_cross = 0;   // Q prints, by definition no book effect
+        std::uint64_t nonprintable_execs = 0;  // C with printable='N'
+    };
+
+    explicit Engine(Listener listener = {}) : listener_(std::move(listener)) {
+        books_.resize(kMaxLocates);
+        trading_state_.assign(kMaxLocates, 'T');
+        symbols_.resize(kMaxLocates);
+    }
+
+    // --- ITCH visitor handlers -------------------------------------------
+
+    void on_system_event(const itch::SystemEvent& m) {
+        if (m.event == 'Q') phase_ = MarketPhase::open;
+        if (m.event == 'M') phase_ = MarketPhase::closed;
+    }
+
+    void on_stock_directory(const itch::StockDirectory& m) {
+        symbols_[m.h.locate] = m.stock;
+    }
+
+    void on_trading_action(const itch::TradingAction& m) {
+        // Reconstruct mode applies events regardless of halt state (the feed
+        // is the truth, §4.1); the state exists for match mode to reject on.
+        trading_state_[m.h.locate] = m.state;
+    }
+
+    void on_add_order(const itch::AddOrder& m) {
+        auto e = book_for(m.h.locate).add(m.ref, m.side, m.price, m.shares);
+        if (!applied(e)) return;
+        listener_.on_add(m.h.locate, m.ref, e.side, e.price, m.shares);
+        listener_.on_level_change(m.h.locate, e.side, e.price, e.level_qty_after);
+    }
+
+    void on_order_executed(const itch::OrderExecuted& m) {
+        auto e = book_for(m.h.locate).execute(m.ref, m.shares);
+        if (!applied(e)) return;
+        stats_.volume_lit += e.applied;
+        // E executes at the resting price, always printable.
+        listener_.on_exec(m.h.locate, m.ref, e.side, e.price, e.applied, true);
+        listener_.on_level_change(m.h.locate, e.side, e.price, e.level_qty_after);
+    }
+
+    void on_order_executed_with_price(const itch::OrderExecutedWithPrice& m) {
+        // Book removal is keyed by ref at the RESTING price; m.price is the
+        // (possibly improved) print price and only feeds the tape (§4.1).
+        auto e = book_for(m.h.locate).execute(m.ref, m.shares);
+        if (!applied(e)) return;
+        if (m.printable) {
+            stats_.volume_lit += e.applied;
+        } else {
+            ++stats_.nonprintable_execs;  // book decremented, volume untouched
+        }
+        listener_.on_exec(m.h.locate, m.ref, e.side, m.price, e.applied, m.printable);
+        listener_.on_level_change(m.h.locate, e.side, e.price, e.level_qty_after);
+    }
+
+    void on_order_cancel(const itch::OrderCancel& m) {
+        auto e = book_for(m.h.locate).cancel(m.ref, m.cancelled);
+        if (!applied(e)) return;
+        listener_.on_cancel(m.h.locate, m.ref, e.side, e.price, e.applied);
+        listener_.on_level_change(m.h.locate, e.side, e.price, e.level_qty_after);
+    }
+
+    void on_order_delete(const itch::OrderDelete& m) {
+        auto e = book_for(m.h.locate).remove(m.ref);
+        if (!applied(e)) return;
+        listener_.on_cancel(m.h.locate, m.ref, e.side, e.price, e.applied);
+        listener_.on_level_change(m.h.locate, e.side, e.price, e.level_qty_after);
+    }
+
+    void on_order_replace(const itch::OrderReplace& m) {
+        // U carries no side (§4.1): snapshot the original, remove it, add the
+        // replacement on the inherited side at the tail of its new level.
+        // A missing original in this locate's book is the locate-consistency
+        // assert in practice — counted, skipped, no partial state change.
+        auto& bk = book_for(m.h.locate);
+        const auto orig = bk.order_snapshot(m.orig_ref);
+        if (!orig) {
+            ++stats_.unknown_ref;
+            return;
+        }
+        if (bk.order_snapshot(m.new_ref)) {
+            ++stats_.duplicate_ref;
+            return;
+        }
+        auto del = bk.remove(m.orig_ref);
+        listener_.on_cancel(m.h.locate, m.orig_ref, del.side, del.price, del.applied);
+        listener_.on_level_change(m.h.locate, del.side, del.price, del.level_qty_after);
+        auto add = bk.add(m.new_ref, orig->side, m.price, m.shares);
+        listener_.on_add(m.h.locate, m.new_ref, add.side, add.price, m.shares);
+        listener_.on_level_change(m.h.locate, add.side, add.price, add.level_qty_after);
+    }
+
+    void on_trade(const itch::Trade& m) {
+        // Execution against non-displayed liquidity: NO book mutation (§4.1).
+        stats_.volume_hidden += m.shares;
+    }
+
+    void on_cross_trade(const itch::CrossTrade& m) {
+        // Cross volume print; displayed participants get their own E/C (§4.1).
+        stats_.volume_cross += m.shares;
+    }
+
+    // --- introspection ----------------------------------------------------
+
+    [[nodiscard]] MarketPhase phase() const noexcept { return phase_; }
+    [[nodiscard]] char trading_state(StockLocate loc) const { return trading_state_[loc]; }
+    [[nodiscard]] bool halted(StockLocate loc) const {
+        const char s = trading_state_[loc];
+        return s == 'H' || s == 'P';
+    }
+    [[nodiscard]] const Stats& stats() const noexcept { return stats_; }
+    [[nodiscard]] const itch::Stock& symbol(StockLocate loc) const { return symbols_[loc]; }
+    [[nodiscard]] Listener& listener() noexcept { return listener_; }
+
+    // Null when the locate was never touched (books are lazy).
+    [[nodiscard]] const Book* book(StockLocate loc) const { return books_[loc].get(); }
+    [[nodiscard]] Book* book(StockLocate loc) { return books_[loc].get(); }
+
+private:
+    Book& book_for(StockLocate loc) {
+        auto& slot = books_[loc];
+        if (!slot) slot = std::make_unique<Book>();
+        return *slot;
+    }
+
+    bool applied(const typename Book::Effect& e) {
+        switch (e.result) {
+            case book::Apply::ok:
+                return true;
+            case book::Apply::clamped:
+                ++stats_.clamped;
+                return true;  // clamped ops still mutated the book
+            case book::Apply::unknown_ref:
+                ++stats_.unknown_ref;
+                return false;
+            case book::Apply::duplicate_ref:
+                ++stats_.duplicate_ref;
+                return false;
+        }
+        return false;
+    }
+
+    std::vector<std::unique_ptr<Book>> books_;
+    std::vector<char> trading_state_;
+    std::vector<itch::Stock> symbols_;
+    Listener listener_;
+    Stats stats_{};
+    MarketPhase phase_ = MarketPhase::pre_open;
+};
+
+}  // namespace ob::engine
