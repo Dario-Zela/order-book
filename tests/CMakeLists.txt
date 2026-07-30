@@ -12,6 +12,7 @@ include(Catch)
 add_executable(ob_tests
   test_endian.cpp
   test_parser.cpp
+  test_mmap.cpp
 )
 target_link_libraries(ob_tests PRIVATE ob::lib Catch2::Catch2WithMain)
 catch_discover_tests(ob_tests)
