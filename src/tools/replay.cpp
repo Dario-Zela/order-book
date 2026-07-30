@@ -55,6 +55,8 @@ void report(const FlatEngine& eng, const BookResources& res, const ob::itch::Par
     std::uint64_t repair_steps = 0;
     std::uint64_t level_mem = 0;
     std::uint64_t live = 0;
+    std::uint64_t rebases = 0;
+    std::uint64_t rebase_moved = 0;
     for (std::uint32_t loc = 0; loc < FlatEngine::kMaxLocates; ++loc) {
         const FlatBook* b = eng.book(static_cast<StockLocate>(loc));
         if (b == nullptr) continue;
@@ -65,6 +67,8 @@ void report(const FlatEngine& eng, const BookResources& res, const ob::itch::Par
         repair_steps += b->stats().repair_steps;
         level_mem += b->memory_bytes();
         live += b->live_orders();
+        rebases += b->stats().rebases;
+        rebase_moved += b->stats().rebase_levels_moved;
     }
     const auto& ps = parser.stats();
     const auto& es = eng.stats();
@@ -98,6 +102,9 @@ void report(const FlatEngine& eng, const BookResources& res, const ob::itch::Par
                 static_cast<double>(level_mem) / 1e6,
                 static_cast<unsigned long long>(growths),
                 static_cast<unsigned long long>(overflow));
+    std::printf("rebases         %llu (%llu levels migrated)\n",
+                static_cast<unsigned long long>(rebases),
+                static_cast<unsigned long long>(rebase_moved));
     std::printf("best repairs    %llu scans, %.2f mean steps (0 = bitmap mode)\n",
                 static_cast<unsigned long long>(repairs),
                 repairs > 0 ? static_cast<double>(repair_steps) / static_cast<double>(repairs)

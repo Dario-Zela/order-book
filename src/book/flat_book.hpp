@@ -67,6 +67,8 @@ public:
         std::uint64_t overflow_hits = 0;   // ops applied to overflow levels
         std::uint64_t best_repairs = 0;    // touch-level-emptied scans
         std::uint64_t repair_steps = 0;    // total levels stepped over in repairs
+        std::uint64_t rebases = 0;             // activity-centred re-anchorings (§5.1)
+        std::uint64_t rebase_levels_moved = 0; // live levels migrated across rebases
     };
 
     FlatBook(BookResources& res, StockLocate locate, BandConfig cfg = {})
@@ -231,6 +233,13 @@ public:
     }
 
 private:
+    // Rolling window of UNREACHABLE out-of-band add prices — the §5.1 rebase
+    // trigger. Reachable prices grow the band instead, so a full window means
+    // real activity is happening somewhere the band cannot extend to (the
+    // classic cause: the band anchored on a pre-open junk quote).
+    static constexpr std::size_t kOobWindow = 32;
+    static constexpr std::uint64_t kRebaseCapPerSide = 4;  // thrash guard
+
     struct SideBand {
         Price base = 0;  // price of levels[0]; valid only when !levels.empty()
         std::vector<PriceLevel> levels;
@@ -238,6 +247,10 @@ private:
         std::ptrdiff_t best = -1;      // band index of best level, -1 = none
         std::size_t band_orders = 0;   // live orders resident in the band
         LevelBitmap bitmap;            // maintained only when cfg_.use_bitmap
+        std::array<Price, kOobWindow> recent_oob{};
+        std::uint8_t oob_n = 0;
+        std::uint32_t band_adds_since = 0;  // in-band adds since the window reset
+        std::uint64_t rebases = 0;
     };
 
     [[nodiscard]] SideBand& band(Side s) noexcept { return s == Side::Bid ? bids_ : asks_; }
@@ -355,8 +368,14 @@ private:
             b.levels.assign(static_cast<std::size_t>(half) * 2 + 1, PriceLevel{});
             if (cfg_.use_bitmap) b.bitmap.reset(b.levels.size());
         }
-        if (!in_band(b, px) && growable_to(b, px)) {
-            grow(b, px);
+        if (!in_band(b, px)) {
+            if (growable_to(b, px)) {
+                grow(b, px);
+            } else if (maybe_rebase(b, px)) {
+                // Re-anchored around recent activity; px is usually inside
+                // the new band, or at least growable toward it now.
+                if (!in_band(b, px) && growable_to(b, px)) grow(b, px);
+            }
         }
         if (in_band(b, px)) {
             const auto idx = static_cast<std::ptrdiff_t>(px - b.base);
@@ -366,6 +385,7 @@ private:
                 b.best = idx;
             }
             ++b.band_orders;
+            ++b.band_adds_since;  // rebase trigger denominator
             return b.levels[static_cast<std::size_t>(idx)];
         }
         ++stats_.overflow_hits;
@@ -435,6 +455,66 @@ private:
                 ++it;
             }
         }
+    }
+
+    // §5.1 rebase, live at last. Record an UNREACHABLE out-of-band add; once
+    // the window fills, re-anchor the band at the window's median (robust to
+    // the occasional junk quote inside the window) and migrate every live
+    // level. The measured motivation (pinned day, 01302020): bands anchored
+    // on pre-open junk quotes left 80% of ops on the overflow map. Capped
+    // per side so bimodal activity cannot thrash.
+    bool maybe_rebase(SideBand& b, Price px) {
+        b.recent_oob[b.oob_n] = px;
+        if (++b.oob_n < kOobWindow) return false;
+        b.oob_n = 0;
+        // Rebase only when unreachable flow DOMINATES: the window filled
+        // faster than in-band adds accumulated. A well-anchored band sees
+        // far/junk quotes trickle into the window over hours while thousands
+        // of adds land in-band — that must never re-anchor onto the junk
+        // (the first version did exactly that and thrashed to its cap).
+        const bool dominated = b.band_adds_since < kOobWindow;
+        b.band_adds_since = 0;
+        if (!dominated) return false;
+        if (b.rebases >= kRebaseCapPerSide) return false;
+        ++b.rebases;
+        ++stats_.rebases;
+
+        auto window = b.recent_oob;
+        std::nth_element(window.begin(), window.begin() + kOobWindow / 2, window.end());
+        const Price anchor = window[kOobWindow / 2];
+
+        // Collect every live level, band and overflow alike.
+        std::vector<std::pair<Price, PriceLevel>> live;
+        for (std::size_t i = 0; i < b.levels.size(); ++i) {
+            if (b.levels[i].order_count > 0) {
+                live.emplace_back(b.base + static_cast<Price>(i), b.levels[i]);
+            }
+        }
+        for (auto& [price, lvl] : b.overflow) live.emplace_back(price, lvl);
+        b.overflow.clear();
+        stats_.rebase_levels_moved += live.size();
+
+        // Fresh band centred on activity; regrows on demand from here.
+        const Price half = cfg_.initial_half_width;
+        b.base = anchor > half ? anchor - half : 0;
+        b.levels.assign(static_cast<std::size_t>(half) * 2 + 1, PriceLevel{});
+        if (cfg_.use_bitmap) b.bitmap.reset(b.levels.size());
+        b.band_orders = 0;
+        b.best = -1;
+
+        const Side side = live.empty() ? Side::Bid : live.front().second.head->side;
+        for (auto& [price, lvl] : live) {
+            if (in_band(b, price)) {
+                const auto idx = static_cast<std::ptrdiff_t>(price - b.base);
+                b.levels[static_cast<std::size_t>(idx)] = lvl;
+                if (cfg_.use_bitmap) b.bitmap.set(static_cast<std::size_t>(idx));
+                if (b.band_orders == 0 || better(side, idx, b.best)) b.best = idx;
+                b.band_orders += lvl.order_count;
+            } else {
+                b.overflow.emplace(price, lvl);
+            }
+        }
+        return true;
     }
 
     // Touch level emptied: scan toward the centre for the next non-empty

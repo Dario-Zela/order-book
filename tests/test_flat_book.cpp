@@ -182,3 +182,64 @@ TEST_CASE("flat: crossed pre-open book is representable") {
     CHECK(book.best_ask() == Price{10000});
     CHECK(book.validate());
 }
+
+TEST_CASE("flat: junk-anchored band rebases onto real activity") {
+    BookResources res{4096};
+    // Tiny band, tight cap: a $0.01-style junk quote anchors the band at 1,
+    // making the real trading range (around 3,000,000) unreachable.
+    FlatBook book{res, 1, BandConfig{.initial_half_width = 64, .max_width = 4096}};
+    book.add(1, Side::Bid, 1, 10);  // pre-open junk: band centres here
+    ob::OrderId ref = 100;
+    for (int i = 0; i < 40; ++i) {  // window (32) fills along the way
+        book.add(ref++, Side::Bid, 3'000'000 + Price(i % 20), 100);
+    }
+    CHECK(book.stats().rebases >= 1);
+    REQUIRE(book.validate());
+    // Post-rebase, real-range adds land in the band, not the overflow map.
+    const auto overflow_before = book.stats().overflow_hits;
+    for (int i = 0; i < 50; ++i) {
+        book.add(ref++, Side::Bid, 3'000'000 + Price(i % 20), 100);
+    }
+    CHECK(book.stats().overflow_hits == overflow_before);
+    // Nothing was lost in the move: junk quote + all real orders live.
+    CHECK(book.live_orders() == 1 + 40 + 50);
+    CHECK(book.order_snapshot(1)->remaining == Qty{10});   // junk quote intact
+    CHECK(book.best_bid() == Price{3'000'019});
+    REQUIRE(book.validate());
+}
+
+TEST_CASE("flat: rebase preserves FIFO order and level contents exactly") {
+    BookResources res{4096};
+    FlatBook book{res, 1, BandConfig{.initial_half_width = 16, .max_width = 256}};
+    book.add(1, Side::Ask, 5, 10);
+    book.add(2, Side::Ask, 5, 20);  // same level, behind 1
+    ob::OrderId ref = 100;
+    for (int i = 0; i < 32; ++i) {  // fill the window: forces a rebase
+        book.add(ref++, Side::Ask, 1'000'000 + Price(i), 7);
+    }
+    REQUIRE(book.stats().rebases == 1);
+    REQUIRE(book.validate());
+    // The old band level moved (to overflow) with its FIFO intact.
+    CHECK(book.level_fifo(Side::Ask, 5) == std::vector<OrderId>{1, 2});
+    auto e = book.execute(1, 10);  // still executable through the same paths
+    CHECK(e.result == ob::book::Apply::ok);
+    CHECK(book.level_fifo(Side::Ask, 5) == std::vector<OrderId>{2});
+    CHECK(book.best_ask() == Price{5});  // overflow best still beats band best
+    REQUIRE(book.validate());
+}
+
+TEST_CASE("flat: rebase cap stops bimodal thrash") {
+    BookResources res{1 << 14};
+    FlatBook book{res, 1, BandConfig{.initial_half_width = 8, .max_width = 64}};
+    ob::OrderId ref = 1;
+    // Alternate two far-apart activity centres; each window-full flips the
+    // band until the cap holds it still.
+    for (int round = 0; round < 40; ++round) {
+        const Price centre = (round % 2 == 0) ? 1'000 : 9'000'000;
+        for (int i = 0; i < 40; ++i) {
+            book.add(ref++, Side::Bid, centre + Price(i % 8), 10);
+        }
+    }
+    CHECK(book.stats().rebases <= 4);  // kRebaseCapPerSide
+    REQUIRE(book.validate());
+}
