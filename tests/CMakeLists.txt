@@ -21,6 +21,7 @@ add_executable(ob_tests
   test_differential.cpp
   test_spsc.cpp
   test_pipeline.cpp
+  test_match.cpp
 )
 target_link_libraries(ob_tests PRIVATE ob::lib ob::warnings Catch2::Catch2WithMain)
 catch_discover_tests(ob_tests)

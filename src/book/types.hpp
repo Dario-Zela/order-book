@@ -30,6 +30,12 @@ struct OrderSnap {
     Qty remaining;
 };
 
+// Head of a level's FIFO — the next order to fill (match mode, §6).
+struct FrontOrder {
+    OrderId ref;
+    Qty remaining;
+};
+
 // What one message did to the book — enough for the engine to emit listener
 // callbacks without re-querying.
 struct Effect {

@@ -91,6 +91,20 @@ public:
         return unlink(o, /*applied=*/o->remaining);
     }
 
+    // Oldest order at (side, price) — the next to fill under price-time
+    // priority. Match mode walks levels through this (§6).
+    [[nodiscard]] std::optional<FrontOrder> front_order(Side side, Price price) const {
+        const SideBand& b = band(side);
+        const Order* head = nullptr;
+        if (in_band(b, price)) {
+            head = b.levels[static_cast<std::size_t>(price - b.base)].head;
+        } else if (auto it = b.overflow.find(price); it != b.overflow.end()) {
+            head = it->second.head;
+        }
+        if (head == nullptr) return std::nullopt;
+        return FrontOrder{head->id, head->remaining};
+    }
+
     [[nodiscard]] std::optional<OrderSnap> order_snapshot(OrderId ref) const {
         const Order* o = const_cast<FlatBook*>(this)->lookup(ref);
         if (o == nullptr) return std::nullopt;

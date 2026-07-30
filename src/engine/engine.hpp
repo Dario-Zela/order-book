@@ -17,6 +17,7 @@
 
 #include "book/listener.hpp"
 #include "core/types.hpp"
+#include "engine/match.hpp"
 #include "itch/messages.hpp"
 #include "itch/parser.hpp"
 
@@ -48,6 +49,8 @@ public:
         std::uint64_t volume_hidden = 0;  // P prints (non-displayed liquidity)
         std::uint64_t volume_cross = 0;   // Q prints, by definition no book effect
         std::uint64_t nonprintable_execs = 0;  // C with printable='N'
+        std::uint64_t volume_matched = 0;      // match-mode fills (synthetic flow)
+        std::uint64_t rejected_halted = 0;     // match-mode submits on halted symbols
     };
 
     explicit Engine(Listener listener = {}, MakeBook make_book = {})
@@ -149,6 +152,70 @@ public:
     void on_cross_trade(const itch::CrossTrade& m) {
         // Cross volume print; displayed participants get their own E/C (§4.1).
         stats_.volume_cross += m.shares;
+    }
+
+    // --- match mode (§6): synthetic flow ---------------------------------
+    // Not for mixing with reconstruct on the same symbols: reconstruct
+    // mirrors an exchange that already matched; submit() IS the exchange.
+
+    template <typename OnFill>
+    SubmitResult submit(StockLocate loc, OrderId ref, Side side, Price limit, Qty qty,
+                        Tif tif, OnFill&& on_fill) {
+        if (halted(loc)) {
+            ++stats_.rejected_halted;
+            return {.status = SubmitStatus::rejected_halted};
+        }
+        struct Hooks {
+            Engine& eng;
+            StockLocate loc;
+            Side taker_side;
+            OnFill& user_fill;
+            void on_fill(const Fill& f, const typename Book::Effect& e) {
+                eng.stats_.volume_matched += f.qty;
+                // The maker is the book resident; the tape shows its side.
+                eng.listener_.on_exec(loc, f.maker, opposite(taker_side), f.price, f.qty,
+                                      true);
+                eng.listener_.on_level_change(loc, opposite(taker_side), f.price,
+                                              e.level_qty_after);
+                user_fill(f);
+            }
+            void on_rest(const typename Book::Effect& e) {
+                eng.listener_.on_level_change(loc, e.side, e.price, e.level_qty_after);
+            }
+        };
+        Hooks hooks{*this, loc, side, on_fill};
+        auto res = engine::submit(book_for(loc), ref, side, limit, qty, tif, hooks);
+        if (res.resting > 0) {
+            listener_.on_add(loc, ref, side, limit, res.resting);
+        }
+        return res;
+    }
+
+    SubmitResult submit(StockLocate loc, OrderId ref, Side side, Price limit, Qty qty,
+                        Tif tif = Tif::limit) {
+        auto noop = [](const Fill&) {};
+        return submit(loc, ref, side, limit, qty, tif, noop);
+    }
+
+    // Synthetic cancel/replace reuse the reconstruct plumbing exactly.
+    void cancel(StockLocate loc, OrderId ref, Qty qty) {
+        on_order_cancel(itch::OrderCancel{{loc, 0, 0}, ref, qty});
+    }
+    void erase(StockLocate loc, OrderId ref) {
+        on_order_delete(itch::OrderDelete{{loc, 0, 0}, ref});
+    }
+    // Replace re-prices through the MATCHING path: side inherited from the
+    // original, and the new order may execute immediately if now marketable.
+    SubmitResult replace(StockLocate loc, OrderId orig, OrderId new_ref, Price limit,
+                         Qty qty, Tif tif = Tif::limit) {
+        auto& bk = book_for(loc);
+        const auto snap = bk.order_snapshot(orig);
+        if (!snap) {
+            ++stats_.unknown_ref;
+            return {.status = SubmitStatus::rejected_invalid};
+        }
+        erase(loc, orig);
+        return submit(loc, new_ref, snap->side, limit, qty, tif);
     }
 
     // --- introspection ----------------------------------------------------

@@ -77,6 +77,18 @@ public:
         return side == Side::Bid ? grab(bids_) : grab(asks_);
     }
 
+    // Oldest order at (side, price) — the next to fill under price-time
+    // priority. Match mode walks levels through this (§6).
+    [[nodiscard]] std::optional<FrontOrder> front_order(Side side, Price price) const {
+        auto grab = [&](const auto& levels) -> std::optional<FrontOrder> {
+            auto it = levels.find(price);
+            if (it == levels.end()) return std::nullopt;
+            const OrderId ref = it->second.fifo.front();
+            return FrontOrder{ref, orders_.find(ref)->second.remaining};
+        };
+        return side == Side::Bid ? grab(bids_) : grab(asks_);
+    }
+
     [[nodiscard]] std::optional<OrderSnap> order_snapshot(OrderId ref) const {
         auto it = orders_.find(ref);
         if (it == orders_.end()) return std::nullopt;
