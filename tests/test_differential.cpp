@@ -6,6 +6,7 @@
 // far-out-of-band prices to force band growth and overflow.
 
 #include <catch2/catch_test_macros.hpp>
+#include <catch2/generators/catch_generators.hpp>
 
 #include <cstdint>
 #include <memory>
@@ -51,6 +52,9 @@ void replay_into(Eng& eng, const Wire& w) {
 }  // namespace
 
 TEST_CASE("differential: flat book matches reference book over a hostile stream") {
+    // Both repair strategies must be indistinguishable from the oracle:
+    // the linear scan and the §5.3 bitmap are the same book to observers.
+    const bool use_bitmap = GENERATE(false, true);
     std::vector<StockLocate> locates;
     // Small band forces many growths and overflow paths; the oracle has no
     // bands at all — agreement means the banding is invisible, as it must be.
@@ -58,7 +62,8 @@ TEST_CASE("differential: flat book matches reference book over a hostile stream"
 
     ob::engine::Engine<RefBook> ref_eng;
     BookResources res(1 << 16);
-    const BandConfig cfg{.initial_half_width = 64, .max_width = 1u << 15};
+    const BandConfig cfg{
+        .initial_half_width = 64, .max_width = 1u << 15, .use_bitmap = use_bitmap};
     ob::engine::Engine<FlatBook, ob::book::NullListener, FlatFactory> flat_eng(
         {}, FlatFactory{&res, cfg});
 

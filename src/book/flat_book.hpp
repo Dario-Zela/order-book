@@ -21,6 +21,7 @@
 #include <optional>
 #include <vector>
 
+#include "book/level_bitmap.hpp"
 #include "book/order.hpp"
 #include "book/types.hpp"
 #include "core/id_map.hpp"
@@ -42,6 +43,11 @@ struct BookResources {
 struct BandConfig {
     std::uint32_t initial_half_width = 2048;  // ticks each side of first price
     std::uint32_t max_width = 1u << 17;       // hard cap; beyond -> overflow map
+    // §5.3 experiment: repair best via the two-level occupancy bitmap
+    // (countr/countl_zero) instead of the linear scan. Runtime-selectable so
+    // both variants A/B in one binary; correctness is identical (differential
+    // + validate() cover both).
+    bool use_bitmap = false;
 };
 
 class FlatBook {
@@ -68,10 +74,14 @@ public:
         o->remaining = qty;
         o->side = side;
         o->locate = locate_;
-        PriceLevel& lvl = level_create(band(side), side, price);
+        SideBand& b = band(side);
+        PriceLevel& lvl = level_create(b, side, price);
         fifo_push_back(lvl, o);
         lvl.total_qty += qty;
         ++lvl.order_count;
+        if (cfg_.use_bitmap && lvl.order_count == 1 && in_band(b, price)) {
+            b.bitmap.set(static_cast<std::size_t>(price - b.base));
+        }
         ++live_orders_;
         res_.ids.insert(ref, o);
         return {.result = Apply::ok,
@@ -193,6 +203,10 @@ public:
                 if (!check_level(b.levels[i], side, b.base + static_cast<Price>(i))) {
                     return false;
                 }
+                if (cfg_.use_bitmap &&
+                    b.bitmap.test(i) != (b.levels[i].order_count > 0)) {
+                    return false;  // bitmap out of sync with occupancy
+                }
             }
             for (const auto& [px, lvl] : b.overflow) {
                 if (lvl.order_count == 0) return false;  // empty overflow must be erased
@@ -215,6 +229,7 @@ private:
         std::map<Price, PriceLevel> overflow;
         std::ptrdiff_t best = -1;      // band index of best level, -1 = none
         std::size_t band_orders = 0;   // live orders resident in the band
+        LevelBitmap bitmap;            // maintained only when cfg_.use_bitmap
     };
 
     [[nodiscard]] SideBand& band(Side s) noexcept { return s == Side::Bid ? bids_ : asks_; }
@@ -290,6 +305,7 @@ private:
             e.level_qty_after = lvl.total_qty;
             if (lvl.order_count == 0) {
                 e.level_removed = true;
+                if (cfg_.use_bitmap) b.bitmap.clear(static_cast<std::size_t>(idx));
                 if (idx == b.best) repair_best(b, o->side);
             }
         } else {
@@ -329,6 +345,7 @@ private:
             const Price half = cfg_.initial_half_width;
             b.base = px > half ? px - half : 0;
             b.levels.assign(static_cast<std::size_t>(half) * 2 + 1, PriceLevel{});
+            if (cfg_.use_bitmap) b.bitmap.reset(b.levels.size());
         }
         if (!in_band(b, px) && growable_to(b, px)) {
             grow(b, px);
@@ -389,6 +406,7 @@ private:
         b.levels = std::move(grown);
         b.base = new_base;
         if (b.best >= 0) b.best += static_cast<std::ptrdiff_t>(shift);
+        if (cfg_.use_bitmap) b.bitmap.grow(b.levels.size(), shift);
         // Swallow overflow levels now inside the band (they would be
         // shadowed otherwise). NOTE: unreachable under the current
         // grow-toward-price policy — an overflow key's distance from the
@@ -398,6 +416,7 @@ private:
             if (in_band(b, it->first)) {
                 const auto idx = static_cast<std::ptrdiff_t>(it->first - b.base);
                 b.levels[static_cast<std::size_t>(idx)] = it->second;
+                if (cfg_.use_bitmap) b.bitmap.set(static_cast<std::size_t>(idx));
                 b.band_orders += it->second.order_count;
                 const Side side = it->second.head->side;
                 if (b.band_orders == it->second.order_count || better(side, idx, b.best)) {
@@ -417,6 +436,14 @@ private:
         ++stats_.best_repairs;
         if (b.band_orders == 0) {
             b.best = -1;
+            return;
+        }
+        if (cfg_.use_bitmap) {
+            // The emptied bit is already cleared: prev/next lands on the new
+            // best directly. Bounded word ops instead of an unbounded scan.
+            b.best = side == Side::Bid
+                         ? b.bitmap.prev_set(static_cast<std::size_t>(b.best))
+                         : b.bitmap.next_set(static_cast<std::size_t>(b.best));
             return;
         }
         std::ptrdiff_t i = b.best;
