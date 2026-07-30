@@ -92,3 +92,27 @@ TEST_CASE("clock: monotone and cheap") {
     const auto cost = ob::clock_overhead_ns();
     CHECK(cost < 1'000);  // a clock costing >1us couldn't support ns claims
 }
+
+TEST_CASE("tsc clock: agrees with the OS clock where supported") {
+    const ob::TscClock tsc(10);
+#if defined(__x86_64__)
+    if (tsc.supported()) {  // exercised for real on x86 CI runners
+        const auto w0 = ob::now_ns();
+        const auto t0 = tsc.clock_now_ns();
+        ob::clock_calibration_sink += ob::clock_overhead_ns();  // ~1ms of work
+        const auto w1 = ob::now_ns();
+        const auto t1 = tsc.clock_now_ns();
+        const double os_dt = static_cast<double>(w1 - w0);
+        const double tsc_dt = static_cast<double>(t1 - t0);
+        CHECK(tsc_dt > 0);
+        CHECK(tsc_dt > os_dt * 0.90);  // within 10% over ~1ms
+        CHECK(tsc_dt < os_dt * 1.10);
+        CHECK(tsc.ns_per_tick() > 0.05);  // 20GHz upper bound sanity
+        CHECK(tsc.ns_per_tick() < 10.0);  // 100MHz lower bound sanity
+    }
+#endif
+    // The fallback must always be a working clock, everywhere.
+    const auto a = tsc.clock_now_ns();
+    const auto b = tsc.clock_now_ns();
+    CHECK(b >= a);
+}

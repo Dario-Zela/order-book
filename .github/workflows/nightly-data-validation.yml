@@ -99,3 +99,26 @@ jobs:
           print(f"audit pass rate: {rate}%")
           sys.exit(0 if rate >= 98.0 else 1)
           EOF
+
+  fuzz:
+    # Coverage-guided libFuzzer (the runtime Apple CLT lacks): 2 minutes per
+    # target nightly, seeded from committed corpora, ASan/UBSan on.
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install ninja
+        run: sudo apt-get update && sudo apt-get install -y ninja-build
+      - name: Configure (libFuzzer + ASan/UBSan)
+        env:
+          CC: clang-18
+          CXX: clang++-18
+        run: >
+          cmake --preset asan -DOB_BUILD_FUZZ=ON -DOB_LIBFUZZER=ON
+          -DOB_BUILD_TESTS=OFF
+      - name: Build fuzz targets
+        run: cmake --build --preset asan --target fuzz_parser fuzz_book
+      - name: Fuzz the parser
+        run: ./build/asan/fuzz/fuzz_parser -max_total_time=120 fuzz/seeds/parser
+      - name: Fuzz the books (inline differential)
+        run: ./build/asan/fuzz/fuzz_book -max_total_time=120 fuzz/seeds/book

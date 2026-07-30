@@ -1,0 +1,45 @@
+name: Perf mechanism evidence (dispatch only)
+
+# MECHANISM EVIDENCE, NOT A BENCHMARK: GitHub runners are shared and
+# virtualised, so absolute numbers from here are never published (§8). What a
+# same-box A/B delta CAN show honestly is whether a mechanism moves its
+# intended counter — here, MADV_HUGEPAGE vs OB_NO_HUGEPAGES=1 against
+# dTLB-load-misses on an identical synthetic replay.
+
+on:
+  workflow_dispatch:
+
+jobs:
+  dtlb-hugepage-delta:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install ninja + perf
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ninja-build linux-tools-common linux-tools-generic
+          sudo sysctl -w kernel.perf_event_paranoid=1 || true
+      - name: Build (release, portable flags)
+        env:
+          CC: clang-18
+          CXX: clang++-18
+        run: |
+          cmake --preset release -DCMAKE_CXX_FLAGS_RELEASE="-O2 -DNDEBUG"
+          cmake --build --preset release --target replay
+      - name: Generate synthetic day (deterministic)
+        run: python3 tools/gen_synth.py synth.itch --msgs=3600000
+      - name: THP state
+        run: cat /sys/kernel/mm/transparent_hugepage/enabled || true
+      - name: A/B x3 interleaved — huge pages vs disabled
+        run: |
+          PERF=$(ls /usr/lib/linux-tools/*/perf | head -1 || echo perf)
+          for i in 1 2 3; do
+            echo "=== round $i: MADV_HUGEPAGE ON ==="
+            sudo $PERF stat -e dTLB-load-misses,dTLB-loads,cycles,instructions \
+              ./build/release/src/tools/replay synth.itch --threads=1 2>&1 | tail -12
+            echo "=== round $i: OB_NO_HUGEPAGES=1 ==="
+            sudo OB_NO_HUGEPAGES=1 $PERF stat -e dTLB-load-misses,dTLB-loads,cycles,instructions \
+              ./build/release/src/tools/replay synth.itch --threads=1 2>&1 | tail -12
+          done
+          echo "NOTE: shared virtualised runner — deltas only, absolutes meaningless (§8)"

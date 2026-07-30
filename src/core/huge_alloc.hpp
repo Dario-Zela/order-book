@@ -25,6 +25,13 @@ namespace ob {
 
 inline constexpr std::size_t kHugePageBytes = 2u << 20;
 
+// A/B switch for the dTLB experiment: OB_NO_HUGEPAGES=1 disables the
+// madvise path at runtime so both variants ship in one binary.
+inline bool hugepages_disabled() noexcept {
+    static const bool off = std::getenv("OB_NO_HUGEPAGES") != nullptr;
+    return off;
+}
+
 template <typename T>
 struct HugeAlloc {
     using value_type = T;
@@ -36,7 +43,7 @@ struct HugeAlloc {
     T* allocate(std::size_t n) {
         const std::size_t bytes = n * sizeof(T);
 #if defined(__linux__)
-        if (bytes >= kHugePageBytes) {
+        if (bytes >= kHugePageBytes && !hugepages_disabled()) {
             void* p = nullptr;
             if (::posix_memalign(&p, kHugePageBytes, bytes) == 0) {
                 ::madvise(p, bytes, MADV_HUGEPAGE);  // advisory: failure is fine
@@ -50,7 +57,7 @@ struct HugeAlloc {
     void deallocate(T* p, std::size_t n) noexcept {
         const std::size_t bytes = n * sizeof(T);
 #if defined(__linux__)
-        if (bytes >= kHugePageBytes) {
+        if (bytes >= kHugePageBytes && !hugepages_disabled()) {
             ::free(p);  // posix_memalign pairs with free
             return;
         }
