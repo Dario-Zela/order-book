@@ -1,0 +1,409 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>order-book — a C++ ITCH matching engine, verified against a real trading day</title>
+<meta name="description" content="C++20 limit order book & matching engine: 423M real NASDAQ messages reconstructed, differential-verified, honestly measured.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,300;9..144,400;9..144,600;9..144,700&family=IBM+Plex+Mono:ital,wght@0,400;0,500;0,600;1,400&display=swap" rel="stylesheet">
+<style>
+:root{
+  --ink:#0b0e0c;
+  --paper:#0f1310;
+  --panel:#141a15;
+  --line:#243027;
+  --text:#c8d3c9;
+  --dim:#7d8b7f;
+  --amber:#ffb454;
+  --green:#7dd87d;
+  --red:#ff7a6b;
+  --serif:"Fraunces",Georgia,serif;
+  --mono:"IBM Plex Mono",ui-monospace,monospace;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+html{scroll-behavior:smooth}
+body{
+  background:var(--paper);
+  color:var(--text);
+  font-family:var(--mono);
+  font-size:15px;
+  line-height:1.65;
+  background-image:
+    linear-gradient(rgba(125,216,125,.025) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(125,216,125,.025) 1px, transparent 1px);
+  background-size:56px 56px;
+}
+::selection{background:var(--amber);color:var(--ink)}
+a{color:var(--green);text-decoration:none;border-bottom:1px solid rgba(125,216,125,.35)}
+a:hover{color:var(--amber);border-bottom-color:var(--amber)}
+
+/* ---------- tape ---------- */
+.tape{
+  overflow:hidden;white-space:nowrap;
+  border-bottom:1px solid var(--line);
+  background:var(--ink);
+  font-size:12.5px;letter-spacing:.04em;
+  padding:.5rem 0;color:var(--dim);
+  user-select:none;
+}
+.tape span{display:inline-block;padding-right:3.5rem;animation:tape 80s linear infinite}
+.tape b{color:var(--green);font-weight:500}
+.tape em{color:var(--amber);font-style:normal}
+@keyframes tape{from{transform:translateX(0)}to{transform:translateX(-50%)}}
+
+/* ---------- shell ---------- */
+.shell{max-width:1060px;margin:0 auto;padding:0 24px}
+header.hero{padding:5.5rem 0 4rem;border-bottom:1px solid var(--line)}
+.kicker{color:var(--amber);font-size:13px;letter-spacing:.22em;text-transform:uppercase;margin-bottom:1.4rem}
+h1{
+  font-family:var(--serif);font-weight:300;color:#eef3ee;
+  font-size:clamp(2.4rem,6vw,4.6rem);line-height:1.04;letter-spacing:-.01em;
+  max-width:19ch;
+}
+h1 .accent{color:var(--amber);font-style:italic;font-weight:400}
+.hero p.lede{
+  max-width:62ch;margin-top:1.8rem;color:var(--dim);font-size:15.5px;
+}
+.hero .links{margin-top:2.2rem;display:flex;gap:1.2rem;flex-wrap:wrap}
+.btn{
+  border:1px solid var(--line);padding:.55rem 1.1rem;color:var(--text);
+  font-size:13.5px;letter-spacing:.03em;background:var(--panel);
+  transition:border-color .2s,color .2s,transform .2s;
+}
+.btn:hover{border-color:var(--amber);color:var(--amber);transform:translateY(-1px)}
+.btn.primary{border-color:var(--green);color:var(--green)}
+.btn.primary:hover{border-color:var(--amber);color:var(--amber)}
+
+/* staggered reveal */
+.reveal{opacity:0;transform:translateY(14px);animation:rise .7s cubic-bezier(.2,.7,.2,1) forwards}
+@keyframes rise{to{opacity:1;transform:none}}
+.d1{animation-delay:.05s}.d2{animation-delay:.15s}.d3{animation-delay:.25s}.d4{animation-delay:.35s}.d5{animation-delay:.5s}
+
+/* ---------- big numbers ---------- */
+.board{
+  display:grid;grid-template-columns:repeat(auto-fit,minmax(230px,1fr));
+  border-left:1px solid var(--line);border-top:1px solid var(--line);
+  margin:0;
+}
+.cell{
+  border-right:1px solid var(--line);border-bottom:1px solid var(--line);
+  padding:1.6rem 1.4rem 1.4rem;background:rgba(20,26,21,.6);
+  position:relative;overflow:hidden;
+}
+.cell:hover{background:rgba(20,26,21,.95)}
+.cell .n{
+  font-family:var(--serif);font-weight:600;font-size:2.35rem;color:#eef3ee;
+  line-height:1;letter-spacing:-.02em;font-variant-numeric:tabular-nums;
+}
+.cell .n small{font-size:1.1rem;color:var(--dim);font-weight:400}
+.cell .l{margin-top:.65rem;font-size:12.5px;color:var(--dim);letter-spacing:.02em}
+.cell.good .n{color:var(--green)}
+.cell.warm .n{color:var(--amber)}
+
+/* ---------- sections ---------- */
+section{padding:4.2rem 0 1rem;border-bottom:1px solid var(--line)}
+.sec-head{display:flex;align-items:baseline;gap:1rem;margin-bottom:2.2rem}
+.sec-head .idx{color:var(--amber);font-size:13px;letter-spacing:.15em}
+h2{font-family:var(--serif);font-weight:400;font-size:2rem;color:#eef3ee;letter-spacing:-.01em}
+h3{font-family:var(--serif);font-weight:600;font-size:1.15rem;color:#e2eae2;margin-bottom:.5rem}
+p{max-width:70ch;margin-bottom:1.1rem}
+p.dim{color:var(--dim)}
+.cols{display:grid;grid-template-columns:repeat(auto-fit,minmax(290px,1fr));gap:2.4rem;margin-bottom:2.5rem}
+
+/* ---------- diagram ---------- */
+pre.diagram{
+  font-size:12.5px;line-height:1.5;color:var(--dim);
+  background:var(--ink);border:1px solid var(--line);
+  padding:1.4rem 1.6rem;overflow-x:auto;margin:0 0 2.5rem;
+}
+pre.diagram b{color:var(--green);font-weight:500}
+pre.diagram i{color:var(--amber);font-style:normal}
+
+/* ---------- ledger table ---------- */
+table{border-collapse:collapse;width:100%;font-size:13.5px;margin-bottom:2.4rem}
+th{
+  text-align:left;color:var(--amber);font-weight:500;letter-spacing:.08em;
+  text-transform:uppercase;font-size:11.5px;padding:.55rem .8rem;
+  border-bottom:1px solid var(--line);
+}
+td{padding:.55rem .8rem;border-bottom:1px solid rgba(36,48,39,.6);vertical-align:top}
+td.num{font-variant-numeric:tabular-nums;color:#eef3ee;white-space:nowrap}
+td.ok{color:var(--green)}
+tr:hover td{background:rgba(125,216,125,.03)}
+.note{font-size:12.5px;color:var(--dim);max-width:74ch;margin:-1.6rem 0 2.4rem}
+
+/* ---------- finding callout ---------- */
+.finding{
+  border:1px solid var(--line);border-left:3px solid var(--amber);
+  background:linear-gradient(180deg, rgba(255,180,84,.05), rgba(20,26,21,.4));
+  padding:1.6rem 1.8rem;margin:0 0 2rem;
+}
+.finding .tag{color:var(--amber);font-size:11.5px;letter-spacing:.18em;text-transform:uppercase}
+.finding h3{margin-top:.5rem}
+.finding p{margin-bottom:.6rem;max-width:78ch}
+.finding p:last-child{margin-bottom:0}
+.finding.green{border-left-color:var(--green);background:linear-gradient(180deg, rgba(125,216,125,.05), rgba(20,26,21,.4))}
+.finding.green .tag{color:var(--green)}
+
+/* ---------- decision cards ---------- */
+.decisions{display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:1px;background:var(--line);border:1px solid var(--line);margin-bottom:2.5rem}
+.decision{background:var(--panel);padding:1.5rem 1.5rem 1.3rem;transition:background .25s}
+.decision:hover{background:#182019}
+.decision .q{color:var(--dim);font-size:12.5px;margin-bottom:.6rem}
+.decision .a{font-size:13.5px}
+.decision .a b{color:var(--green);font-weight:500}
+
+/* ---------- bars ---------- */
+.bars{margin:0 0 2.4rem;max-width:640px}
+.bar-row{display:grid;grid-template-columns:190px 1fr 90px;gap:1rem;align-items:center;margin-bottom:.7rem;font-size:13px}
+.bar-track{background:var(--ink);border:1px solid var(--line);height:20px;position:relative}
+.bar-fill{position:absolute;inset:2px auto 2px 2px;background:linear-gradient(90deg,var(--green),rgba(125,216,125,.5));width:0;transition:width 1.2s cubic-bezier(.2,.7,.2,1)}
+.bar-fill.amber{background:linear-gradient(90deg,var(--amber),rgba(255,180,84,.5))}
+.bar-val{font-variant-numeric:tabular-nums;color:#eef3ee;text-align:right}
+
+/* ---------- roadmap ---------- */
+ul.plain{list-style:none;margin-bottom:2.4rem}
+ul.plain li{padding:.45rem 0 .45rem 1.6rem;position:relative;font-size:13.5px;max-width:74ch}
+ul.plain li::before{content:"›";position:absolute;left:.2rem;color:var(--amber)}
+ul.plain li.done::before{content:"■";color:var(--green);font-size:9px;top:.85rem}
+
+footer{padding:3.5rem 0 5rem;color:var(--dim);font-size:12.5px}
+footer .sig{margin-top:.6rem}
+@media (max-width:640px){
+  .bar-row{grid-template-columns:120px 1fr 80px}
+  header.hero{padding:3.5rem 0 3rem}
+}
+</style>
+</head>
+<body>
+
+<div class="tape" aria-hidden="true"><span>
+  <b>A</b> 184,735,355 add&nbsp;&nbsp;<em>D</em> 180,285,101 delete&nbsp;&nbsp;<b>U</b> 36,777,372 replace&nbsp;&nbsp;<em>E</em> 8,415,610 executed&nbsp;&nbsp;<b>X</b> 4,990,972 cancel&nbsp;&nbsp;<em>F</em> 1,875,350 add/mpid&nbsp;&nbsp;<b>P</b> 1,779,727 hidden&nbsp;&nbsp;<em>C</em> 139,474 exec/price&nbsp;&nbsp;<b>Q</b> 17,835 cross&nbsp;&nbsp;<em>H</em> 8,921 halt&nbsp;&nbsp;<b>R</b> 8,916 directory&nbsp;&nbsp;<em>S</em> 6 system&nbsp;&nbsp;··· 01302020.NASDAQ_ITCH50 ··· 423,285,709 messages ··· 0 malformed ···&nbsp;
+  <b>A</b> 184,735,355 add&nbsp;&nbsp;<em>D</em> 180,285,101 delete&nbsp;&nbsp;<b>U</b> 36,777,372 replace&nbsp;&nbsp;<em>E</em> 8,415,610 executed&nbsp;&nbsp;<b>X</b> 4,990,972 cancel&nbsp;&nbsp;<em>F</em> 1,875,350 add/mpid&nbsp;&nbsp;<b>P</b> 1,779,727 hidden&nbsp;&nbsp;<em>C</em> 139,474 exec/price&nbsp;&nbsp;<b>Q</b> 17,835 cross&nbsp;&nbsp;<em>H</em> 8,921 halt&nbsp;&nbsp;<b>R</b> 8,916 directory&nbsp;&nbsp;<em>S</em> 6 system&nbsp;&nbsp;··· 01302020.NASDAQ_ITCH50 ··· 423,285,709 messages ··· 0 malformed ···&nbsp;
+</span></div>
+
+<div class="shell">
+
+<header class="hero">
+  <div class="kicker reveal d1">C++20 · NASDAQ TotalView-ITCH 5.0 · lock-free · differential-tested</div>
+  <h1 class="reveal d2">One full trading day, rebuilt message by message — <span class="accent">and proven right.</span></h1>
+  <p class="lede reveal d3">
+    A limit order book and matching engine that parses real exchange data at
+    tens of millions of messages per second, reconstructs the book for every
+    listed symbol, and — because no answer key exists — proves its own
+    correctness with a second implementation, stream-derived audits, and a
+    nightly full-day replay in CI.
+  </p>
+  <div class="links reveal d4">
+    <a class="btn primary" href="https://github.com/Dario-Zela/order-book">source on github</a>
+    <a class="btn" href="https://github.com/Dario-Zela/order-book/blob/main/docs/DESIGN.md">design document</a>
+    <a class="btn" href="#results">the numbers</a>
+  </div>
+</header>
+
+<section id="results">
+  <div class="sec-head"><span class="idx">01</span><h2>The one-day acceptance test</h2></div>
+  <p class="dim" style="margin-bottom:2rem">
+    Pinned sample day: <b style="color:var(--text)">01302020.NASDAQ_ITCH50</b>
+    (12.95&nbsp;GB raw, from emi.nasdaq.com). Every claim below re-verifies
+    nightly on GitHub Actions.
+  </p>
+  <div class="board reveal d5">
+    <div class="cell"><div class="n">423,285,709</div><div class="l">messages parsed — a complete trading session</div></div>
+    <div class="cell good"><div class="n">0</div><div class="l">malformed messages, crashes, or unexplained drops</div></div>
+    <div class="cell good"><div class="n">100<small>%</small></div><div class="l">full-day agreement with the reference oracle — every level, every queue, all 8,900 symbols</div></div>
+    <div class="cell warm"><div class="n">99.87<small>%</small></div><div class="l">of at-price executions found their order at the front of its FIFO — price-time priority, proven from the stream</div></div>
+    <div class="cell"><div class="n">22.7<small>M/s</small></div><div class="l">parse throughput, cold first pass over the mmap</div></div>
+    <div class="cell"><div class="n">1.93<small>M</small></div><div class="l">peak live orders — pooled arena, zero allocations after startup</div></div>
+  </div>
+</section>
+
+<section>
+  <div class="sec-head"><span class="idx">02</span><h2>Architecture</h2></div>
+<pre class="diagram">
+ Thread A (producer)                          Thread B (consumer)
+┌─────────┐   ┌──────────────┐   ┌──────────────┐   ┌──────────────────┐   ┌─────────────┐
+│ mmap'd  │ → │ <b>itch::Parser</b> │ → │ <i>SPSC ring</i>    │ → │ <b>Engine</b>           │ → │ listeners:  │
+│ 13GB day│   │ zero-copy    │   │ 48B events   │   │ per-symbol books │   │ tape, stats │
+└─────────┘   │ zero-alloc   │   │ lock-free    │   │ price-time FIFO  │   │ audit, hist │
+              └──────────────┘   └──────────────┘   └──────────────────┘   └─────────────┘
+</pre>
+  <div class="cols">
+    <div>
+      <h3>The book is a flat array, not a tree</h3>
+      <p class="dim">Each side of each symbol's book is a dense band of price
+      levels indexed by tick offset — O(1) lookup, and the levels near the
+      touch share cache lines. Orders are 64-byte pooled nodes on intrusive
+      FIFOs. A robin-hood hash map with backward-shift deletion finds any
+      order by reference in ~12ns; over a full day it never rehashed and
+      never probed past 10 slots.</p>
+    </div>
+    <div>
+      <h3>The ring's ordering is argued, not assumed</h3>
+      <p class="dim">The SPSC ring uses release/acquire publication with
+      relaxed self-reads, cached indices to kill cross-core line ping-pong,
+      and batched pops. The memory-ordering proof is written out in the
+      header; a TSan-instrumented stress test (5M assertions) is treated as
+      supporting evidence — not the proof itself.</p>
+    </div>
+    <div>
+      <h3>Correctness without an answer key</h3>
+      <p class="dim">A deliberately-simple <code>std::map</code> reference
+      book is kept forever as the oracle. The fast book must match it on
+      every level and every queue position over the entire day — plus golden
+      snapshots, structural invariants, property tests on the matcher, fuzz
+      targets, and an audit derived from the stream itself.</p>
+    </div>
+  </div>
+</section>
+
+<section>
+  <div class="sec-head"><span class="idx">03</span><h2>What real data taught me</h2></div>
+
+  <div class="finding">
+    <div class="tag">Finding · memory</div>
+    <h3>The design doc's band sizing was wrong by 16× — and the measurement caught it</h3>
+    <p>Price bands anchor on each side's <em>first</em> order. Pre-open,
+    that's often a $0.01 bid on a $300 stock — stranding the band miles from
+    real trading. The doc's default configuration allocated
+    <b style="color:var(--amber)">31 GB</b> of price-level arrays; retuned,
+    the same throughput fits in <b style="color:var(--green)">1.9 GB</b>.
+    The proper fix — re-centring bands on actual activity — is now queued
+    with data to justify it, which is exactly the order I wanted decisions
+    made in.</p>
+  </div>
+
+  <div class="finding green">
+    <div class="tag">Finding · microstructure</div>
+    <h3>The audit's "failures" turned out to be market microstructure</h3>
+    <p>If price-time priority holds, an executed order should be at the front
+    of its queue. Overall pass rate: 98.53%. Split by execution type it
+    becomes an explanation: at-price executions pass
+    <b style="color:var(--green)">99.87%</b>, while price-improved
+    executions pass only 17% — correctly, because midpoint prints don't
+    follow displayed-queue priority. The audit didn't find a bug; it found
+    the market.</p>
+  </div>
+
+  <h3 style="margin:2rem 0 .9rem">Backward-shift deletion earns its keep under churn</h3>
+  <div class="bars" id="bars">
+    <div class="bar-row"><span class="dim">IdMap find (hit)</span><div class="bar-track"><div class="bar-fill" data-w="4%"></div></div><span class="bar-val">11.8 ns</span></div>
+    <div class="bar-row"><span class="dim">std::unordered_map find</span><div class="bar-track"><div class="bar-fill amber" data-w="4.2%"></div></div><span class="bar-val">12.6 ns</span></div>
+    <div class="bar-row"><span class="dim">IdMap insert+erase churn</span><div class="bar-track"><div class="bar-fill" data-w="17%"></div></div><span class="bar-val">54.6 ns</span></div>
+    <div class="bar-row"><span class="dim">std::unordered_map churn</span><div class="bar-track"><div class="bar-fill amber" data-w="100%"></div></div><span class="bar-val">321 ns</span></div>
+  </div>
+  <p class="note">Replay-realistic keys: dense sequential ITCH refs with deletes as
+  frequent as inserts — the workload a trading day actually generates. Plain
+  lookups are a wash; the churn case is 5.9× faster, and churn is what a full
+  day is made of.</p>
+</section>
+
+<section>
+  <div class="sec-head"><span class="idx">04</span><h2>Measured honestly</h2></div>
+  <p class="dim" style="max-width:74ch">Throughput runs and latency runs are separate modes
+  answering different questions. The paced mode replays by event time and stamps every
+  message with its <em>intended</em> arrival, so a stall is charged to every message it
+  delays — Gil Tene's coordinated-omission correction. Each number states its run type;
+  anything taken on a busy machine says so.</p>
+  <table>
+    <tr><th>metric</th><th>value</th><th>run type &amp; caveats</th></tr>
+    <tr><td>ITCH parse, null listener</td><td class="num ok">22.7M msgs/s</td><td>cold single pass, full 13GB day, M-series laptop under load</td></tr>
+    <tr><td>Full-day reconstruct, single thread</td><td class="num">3.8M msgs/s</td><td>throughput run · busy machine · lower bound</td></tr>
+    <tr><td>Full-day reconstruct, 2-thread pipeline</td><td class="num">4.8M msgs/s</td><td>throughput run · ring occupancy pegged → consumer-bound</td></tr>
+    <tr><td>Id-map find, replay-realistic keys</td><td class="num ok">11.8 ns</td><td>google-benchmark, DoNotOptimize, churned-sequential keys</td></tr>
+    <tr><td>Clock overhead (bounds all latency claims)</td><td class="num">~8 ns/read</td><td>measured, printed beside every histogram</td></tr>
+    <tr><td>Paced-latency p50 (60×, first hour)</td><td class="num">~2 µs</td><td>coordinated-omission-corrected · tails host-load-dominated · labelled first-cut</td></tr>
+  </table>
+  <p class="note">The quiet-machine, multi-run, median±spread pass — and a canonical
+  Linux/x86 run with rdtsc — are on the roadmap. Honest lower bounds now beat pretty
+  numbers later.</p>
+</section>
+
+<section>
+  <div class="sec-head"><span class="idx">05</span><h2>Design decisions, briefly defended</h2></div>
+  <div class="decisions">
+    <div class="decision">
+      <div class="q">Why no PriceLevel backpointer in Order?</div>
+      <div class="a">With a flat band, <b>(side, price) is the pointer</b> — O(1)
+      arithmetic to the level. Kills the rebase fix-up problem outright; the
+      overflow map pays O(log n) on its rare path instead.</div>
+    </div>
+    <div class="decision">
+      <div class="q">Why backward-shift deletion, not tombstones?</div>
+      <div class="a">Deletes are as frequent as inserts over a replay day.
+      Tombstones degrade probe lengths monotonically; backward shift keeps
+      clusters canonical — <b>max probe 10 after 423M messages</b>.</div>
+    </div>
+    <div class="decision">
+      <div class="q">Why is Replace composed in the engine?</div>
+      <div class="a">ITCH's Replace carries no side — it must be inherited from
+      the original. Writing snapshot→remove→add <b>once, above both book
+      implementations</b>, means the rule can't drift between them.</div>
+    </div>
+    <div class="decision">
+      <div class="q">Why does the matcher reuse book primitives?</div>
+      <div class="a">Match mode is composed from the same verified operations
+      reconstruct uses, and it's generic over the book — so <b>the oracle
+      differential covers matching too</b>, fill-for-fill.</div>
+    </div>
+    <div class="decision">
+      <div class="q">Why release/acquire and not seq_cst?</div>
+      <div class="a">Release publishes the slot write; acquire observes it.
+      That's the entire requirement. On x86 both compile to plain MOVs —
+      <b>seq_cst would buy an mfence and nothing else</b>.</div>
+    </div>
+    <div class="decision">
+      <div class="q">Why keep the slow reference book forever?</div>
+      <div class="a">It's the oracle. Every optimisation must reproduce it
+      exactly — level, queue, counter — over a full real day, <b>every
+      night, in CI</b>.</div>
+    </div>
+  </div>
+</section>
+
+<section>
+  <div class="sec-head"><span class="idx">06</span><h2>Verification ledger</h2></div>
+  <ul class="plain">
+    <li class="done">95 tests across debug / release / ASan+UBSan / TSan presets</li>
+    <li class="done">Full-day differential vs the reference oracle — every price level, every FIFO, 8,900 symbols; both books end the day exactly empty</li>
+    <li class="done">Golden L2 snapshots: oracle-dumped, flat-book-verified, committed</li>
+    <li class="done">Execution-at-front audit with categorised exceptions (98.53% overall, 99.87% at-price)</li>
+    <li class="done">SPSC stress: 2M-op randomised-stall runs under TSan, strict FIFO + checksums</li>
+    <li class="done">Fuzz targets: parser never-crash accounting + hostile op streams driven into both books with an inline differential</li>
+    <li class="done">Nightly CI replays the entire pinned day: exact counts, goldens, differential, audit threshold — identical results on macOS/arm64 and Linux/x86</li>
+  </ul>
+</section>
+
+<section style="border-bottom:none">
+  <div class="sec-head"><span class="idx">07</span><h2>Roadmap</h2></div>
+  <ul class="plain">
+    <li>MoldUDP64 UDP replay: framing, A/B feed arbitration, gap-fill re-requests</li>
+    <li>Activity-centred band rebase (justified by the 31GB finding above)</li>
+    <li>Multi-symbol sharding across engine threads</li>
+    <li>Quiet-machine benchmark pass; canonical Linux/x86 numbers with rdtsc</li>
+    <li>Huge pages for arena + id map; dTLB-miss delta via perf stat</li>
+  </ul>
+</section>
+
+<footer>
+  <div>order-book · C++20 · built and verified against 01302020.NASDAQ_ITCH50</div>
+  <div class="sig">source: <a href="https://github.com/Dario-Zela/order-book">github.com/Dario-Zela/order-book</a> · design doc written before the first line of code: <a href="https://github.com/Dario-Zela/order-book/blob/main/docs/DESIGN.md">DESIGN.md</a></div>
+</footer>
+
+</div>
+
+<script>
+// grow the comparison bars when they scroll into view
+const bars = document.getElementById('bars');
+const io = new IntersectionObserver((entries)=>{
+  if(entries[0].isIntersecting){
+    bars.querySelectorAll('.bar-fill').forEach(el=>{el.style.width=el.dataset.w;});
+    io.disconnect();
+  }
+},{threshold:.4});
+io.observe(bars);
+</script>
+</body>
+</html>
