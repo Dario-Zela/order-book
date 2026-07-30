@@ -13,3 +13,6 @@ target_link_libraries(itch_slice PRIVATE ob::lib ob::warnings)
 
 add_executable(differential differential.cpp)
 target_link_libraries(differential PRIVATE ob::lib ob::warnings)
+
+add_executable(golden golden.cpp)
+target_link_libraries(golden PRIVATE ob::lib ob::warnings)
