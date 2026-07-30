@@ -1,10 +1,11 @@
 name: Perf mechanism evidence (dispatch only)
 
-# MECHANISM EVIDENCE, NOT A BENCHMARK: GitHub runners are shared and
-# virtualised, so absolute numbers from here are never published (§8). What a
-# same-box A/B delta CAN show honestly is whether a mechanism moves its
-# intended counter — here, MADV_HUGEPAGE vs OB_NO_HUGEPAGES=1 against
-# dTLB-load-misses on an identical synthetic replay.
+# MECHANISM EVIDENCE, NOT A BENCHMARK — and on GitHub's runners, not even
+# that: the first dispatch (2026-07-30) showed the hypervisor exposes NO
+# hardware PMU counters (dTLB-load-misses reports <not supported>). The job
+# is kept as ready-to-run scaffolding for a self-hosted/bare-metal runner,
+# where the same A/B (MADV_HUGEPAGE vs OB_NO_HUGEPAGES=1) will produce the
+# §11 dTLB delta. Until then the huge-page effect stays UNCLAIMED (§8).
 
 on:
   workflow_dispatch:
