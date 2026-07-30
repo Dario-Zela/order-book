@@ -12,37 +12,14 @@
 #include <unordered_map>
 #include <vector>
 
+#include "book/types.hpp"
 #include "core/types.hpp"
 
 namespace ob::book {
 
-enum class Apply : std::uint8_t {
-    ok,
-    unknown_ref,    // Execute/Cancel/Delete/Replace for an id we never saw (§4.1)
-    duplicate_ref,  // Add with a live ref, or Replace onto a live new_ref
-    clamped,        // exec/cancel qty exceeded remaining; applied at remaining
-};
-
-struct LevelView {
-    Price price;
-    Qty qty;
-    std::uint32_t count;
-    bool operator==(const LevelView&) const = default;
-};
-
 class RefBook {
 public:
-    // What one message did to the book — enough for the engine to emit
-    // listener callbacks without re-querying.
-    struct Effect {
-        Apply result = Apply::ok;
-        Side side{};
-        Price price = 0;        // resting level touched (C decrements here, not exec px)
-        Qty level_qty_after = 0;
-        Qty applied = 0;        // qty actually executed/cancelled (post-clamp)
-        bool order_removed = false;
-        bool level_removed = false;
-    };
+    using Effect = book::Effect;
 
     Effect add(OrderId ref, Side side, Price price, Qty qty) {
         if (orders_.contains(ref)) {
@@ -100,11 +77,6 @@ public:
         return side == Side::Bid ? grab(bids_) : grab(asks_);
     }
 
-    struct OrderSnap {
-        Side side;
-        Price price;
-        Qty remaining;
-    };
     [[nodiscard]] std::optional<OrderSnap> order_snapshot(OrderId ref) const {
         auto it = orders_.find(ref);
         if (it == orders_.end()) return std::nullopt;

@@ -24,7 +24,18 @@ namespace ob::engine {
 
 enum class MarketPhase : std::uint8_t { pre_open, open, closed };
 
-template <typename Book, typename Listener = book::NullListener>
+namespace detail {
+template <typename Book>
+struct DefaultMakeBook {
+    std::unique_ptr<Book> operator()(StockLocate) const { return std::make_unique<Book>(); }
+};
+}  // namespace detail
+
+// MakeBook lets book types with shared resources (FlatBook: global arena +
+// id map) be constructed lazily per locate; the default works for any
+// default-constructible book.
+template <typename Book, typename Listener = book::NullListener,
+          typename MakeBook = detail::DefaultMakeBook<Book>>
 class Engine : public itch::NullVisitor {
 public:
     static constexpr std::size_t kMaxLocates = 65536;
@@ -39,7 +50,8 @@ public:
         std::uint64_t nonprintable_execs = 0;  // C with printable='N'
     };
 
-    explicit Engine(Listener listener = {}) : listener_(std::move(listener)) {
+    explicit Engine(Listener listener = {}, MakeBook make_book = {})
+        : listener_(std::move(listener)), make_book_(std::move(make_book)) {
         books_.resize(kMaxLocates);
         trading_state_.assign(kMaxLocates, 'T');
         symbols_.resize(kMaxLocates);
@@ -158,7 +170,7 @@ public:
 private:
     Book& book_for(StockLocate loc) {
         auto& slot = books_[loc];
-        if (!slot) slot = std::make_unique<Book>();
+        if (!slot) slot = make_book_(loc);
         return *slot;
     }
 
@@ -183,6 +195,7 @@ private:
     std::vector<char> trading_state_;
     std::vector<itch::Stock> symbols_;
     Listener listener_;
+    MakeBook make_book_;
     Stats stats_{};
     MarketPhase phase_ = MarketPhase::pre_open;
 };
