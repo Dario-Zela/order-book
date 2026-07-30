@@ -312,6 +312,7 @@ footer .sig{margin-top:.6rem}
     <tr><td>ITCH parse, null listener</td><td class="num ok">22.7M msgs/s</td><td>cold single pass, full 13GB day, M-series laptop under load</td></tr>
     <tr><td>Full-day reconstruct, single thread</td><td class="num">3.8M msgs/s</td><td>throughput run · busy machine · lower bound</td></tr>
     <tr><td>Full-day reconstruct, 2-thread pipeline</td><td class="num">4.8M msgs/s</td><td>throughput run · ring occupancy pegged → consumer-bound</td></tr>
+    <tr><td>Full-day reconstruct, 4-shard</td><td class="num ok">19.7M msgs/s</td><td>throughput run · whole day in 21.3 s · volumes match single-thread</td></tr>
     <tr><td>Id-map find, replay-realistic keys</td><td class="num ok">11.8 ns</td><td>google-benchmark, DoNotOptimize, churned-sequential keys</td></tr>
     <tr><td>Clock overhead (bounds all latency claims)</td><td class="num">~8 ns/read</td><td>measured, printed beside every histogram</td></tr>
     <tr><td>Paced-latency p50 (60×, first hour)</td><td class="num">~2 µs</td><td>coordinated-omission-corrected · tails host-load-dominated · labelled first-cut</td></tr>
@@ -377,13 +378,13 @@ footer .sig{margin-top:.6rem}
 </section>
 
 <section style="border-bottom:none">
-  <div class="sec-head"><span class="idx">07</span><h2>Roadmap</h2></div>
+  <div class="sec-head"><span class="idx">07</span><h2>Stretch goals &amp; roadmap</h2></div>
   <ul class="plain">
-    <li>MoldUDP64 UDP replay: framing, A/B feed arbitration, gap-fill re-requests</li>
+    <li class="done">MoldUDP64 dual-feed UDP replay: 93.3M real messages over loopback with 3% loss per feed — 66,714 gaps healed by rewinder re-requests, reconstruction byte-identical to file replay</li>
+    <li class="done">Sharded replay: the full 423M-message day in 21 seconds (4 engine threads + router; volumes identical to single-thread)</li>
+    <li class="done">Huge-page-backed arena and id map (Linux THP; dTLB delta awaits the canonical perf run)</li>
     <li>Activity-centred band rebase (justified by the 31GB finding above)</li>
-    <li>Multi-symbol sharding across engine threads</li>
     <li>Quiet-machine benchmark pass; canonical Linux/x86 numbers with rdtsc</li>
-    <li>Huge pages for arena + id map; dTLB-miss delta via perf stat</li>
   </ul>
 </section>
 

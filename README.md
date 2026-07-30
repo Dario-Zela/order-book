@@ -84,11 +84,12 @@ Tools (all under `build/release/src/tools/`):
 | Tool | Purpose |
 |---|---|
 | `itch_count` | per-type message counts for a day file |
-| `replay` | full reconstruct; `--threads=2` pipeline, `--audit`, `--bitmap` |
+| `replay` | full reconstruct; `--threads=2` pipeline, `--shards=N`, `--audit`, `--bitmap` |
 | `bench_replay` | throughput mode and paced-latency mode (`--speed`, histograms) |
 | `differential` | full-file flat-vs-reference comparison |
 | `golden` | dump/check L2 snapshots against the oracle |
 | `itch_slice` | cut a first-hour dev slice by timestamp |
+| `mold_send` / `mold_recv` | MoldUDP64 dual-feed UDP replay with loss simulation, rewinder, A/B arbitration and gap-fill |
 
 CI runs {gcc, clang} × {ASan/UBSan, release} + TSan on every push, and a
 nightly job replays the entire pinned day: exact counts, golden check,
@@ -107,10 +108,27 @@ fuzz         libFuzzer targets (parser + hostile book driver)
 tests        95 tests: unit, property, differential, stress
 ```
 
+## Networking and scaling (the stretch goals, delivered)
+
+The MoldUDP64 layer streams a day as a dual-feed UDP session with simulated
+independent loss, a bounded rewinder serving gap-fill re-requests, and a
+receiver that arbitrates both feeds by sequence arithmetic. Acceptance run:
+the full 93.3M-message first hour over loopback with 3% loss per feed —
+66,714 gaps healed, 2.39M duplicates collapsed, and the reconstructed
+volumes match a direct file replay exactly. The first attempt at full rate
+collapsed spectacularly (kernel buffer overflow, a 260k re-request storm,
+and a rewinder that had scrolled past the gap — refusing correctly); the
+fixes that run taught are documented in the arbitrator.
+
+Sharded replay (`--shards=4`: one parse/route thread, four engine threads
+over per-shard SPSC rings) reconstructs the entire 423M-message day in
+**21 seconds** — the design target of "full day under a minute" with room to
+spare, and identical volumes to the single-thread run.
+
 ## Honest limitations
 
-No networking yet (MoldUDP64 replay is in progress), one engine thread per
-book universe, no persistence or risk checks, and the only order types are
-limit and IOC. Prices stay in ITCH's integer ticks end to end — no floating
-point in the book, ever. See the design doc's non-goals list; scope
-discipline was a feature of this project, not an accident.
+No persistence or risk checks, and the only order types are limit and IOC.
+Prices stay in ITCH's integer ticks end to end — no floating point in the
+book, ever. Huge-page backing exists but its dTLB effect is unmeasured
+until the canonical Linux perf run. See the design doc's non-goals list;
+scope discipline was a feature of this project, not an accident.
