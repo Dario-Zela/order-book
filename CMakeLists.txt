@@ -9,7 +9,10 @@ set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 option(OB_BUILD_TESTS "Build unit tests" ON)
 option(OB_BUILD_BENCH "Build benchmarks" OFF)
 
-add_compile_options(-Wall -Wextra -Wpedantic -Wconversion -Wshadow)
+# Scoped to our targets (ob::warnings) so FetchContent deps build clean.
+add_library(ob_warnings INTERFACE)
+add_library(ob::warnings ALIAS ob_warnings)
+target_compile_options(ob_warnings INTERFACE -Wall -Wextra -Wpedantic -Wconversion -Wshadow)
 
 # Sanitizer toggles driven by presets
 set(OB_SANITIZE "" CACHE STRING "Sanitizer set: address+undefined, thread, or empty")

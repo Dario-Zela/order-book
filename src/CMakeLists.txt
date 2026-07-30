@@ -5,5 +5,6 @@ add_library(ob_lib STATIC
 )
 add_library(ob::lib ALIAS ob_lib)
 target_include_directories(ob_lib PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
+target_link_libraries(ob_lib PRIVATE ob::warnings)
 
 add_subdirectory(tools)
