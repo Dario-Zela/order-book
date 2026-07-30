@@ -13,6 +13,8 @@ add_executable(ob_tests
   test_endian.cpp
   test_parser.cpp
   test_mmap.cpp
+  test_pool.cpp
+  test_id_map.cpp
   test_ref_book.cpp
   test_engine.cpp
 )
