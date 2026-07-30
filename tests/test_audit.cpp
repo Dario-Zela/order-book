@@ -34,8 +34,8 @@ TEST_CASE("audit: FIFO-respecting executions pass") {
     w.exec(1, 100);  // front
     w.exec(2, 50);   // becomes front after 1 is gone
     const auto s = audit_replay(w);
-    CHECK(s.checked == 2);
-    CHECK(s.at_front == 2);
+    CHECK(s.checked() == 2);
+    CHECK(s.at_front() == 2);
     CHECK(s.pass_rate() == 1.0);
 }
 
@@ -45,8 +45,8 @@ TEST_CASE("audit: out-of-order execution is counted, not fatal") {
     w.add(1, 'B', 100, 10000).add(2, 'B', 100, 10000);
     w.exec(2, 50);  // 1 is still at the front: violation
     const auto s = audit_replay(w);
-    CHECK(s.checked == 1);
-    CHECK(s.at_front == 0);
+    CHECK(s.checked() == 1);
+    CHECK(s.at_front() == 0);
 }
 
 TEST_CASE("audit: pre-open executions are skipped as expected exceptions") {
@@ -54,7 +54,7 @@ TEST_CASE("audit: pre-open executions are skipped as expected exceptions") {
     w.add(1, 'B', 100, 10000).add(2, 'B', 100, 10000);
     w.exec(2, 50);
     const auto s = audit_replay(w);
-    CHECK(s.checked == 0);
+    CHECK(s.checked() == 0);
     CHECK(s.skipped_preopen == 1);
 }
 
@@ -65,7 +65,7 @@ TEST_CASE("audit: halted-symbol executions are skipped") {
     w.halt('H');
     w.exec(1, 50);
     const auto s = audit_replay(w);
-    CHECK(s.checked == 0);
+    CHECK(s.checked() == 0);
     CHECK(s.skipped_halted == 1);
 }
 
@@ -74,6 +74,6 @@ TEST_CASE("audit: unknown refs (mid-stream start) are skipped") {
     w.sys_event('Q');
     w.exec(42, 50);
     const auto s = audit_replay(w);
-    CHECK(s.checked == 0);
+    CHECK(s.checked() == 0);
     CHECK(s.skipped_unknown == 1);
 }

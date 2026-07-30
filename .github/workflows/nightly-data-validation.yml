@@ -1,0 +1,93 @@
+name: Nightly data validation
+
+# The slow correctness jobs (DESIGN §9.1/§12): full-day differential against
+# the reference oracle, golden check, per-type count cross-check, and the
+# execution-at-front audit — all over the pinned real sample day
+# (01302020.NASDAQ_ITCH50, emi.nasdaq.com). The 5.6GB gzip is cached between
+# runs; a cache miss re-downloads from NASDAQ (slow but free). Correctness
+# only — perf numbers never come from shared CI boxes (§8).
+
+on:
+  schedule:
+    - cron: "0 3 * * *"
+  workflow_dispatch:
+
+concurrency:
+  group: nightly-data-validation
+  cancel-in-progress: false
+
+jobs:
+  full-day-validation:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 180
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install ninja
+        run: sudo apt-get update && sudo apt-get install -y ninja-build
+
+      - name: Restore pinned sample day
+        id: cache-itch
+        uses: actions/cache@v4
+        with:
+          path: data/01302020.NASDAQ_ITCH50.gz
+          key: itch-01302020-v1
+
+      - name: Download pinned sample day (cache miss)
+        if: steps.cache-itch.outputs.cache-hit != 'true'
+        run: |
+          mkdir -p data
+          curl -sS --retry 3 --retry-delay 10 -o data/01302020.NASDAQ_ITCH50.gz \
+            "https://emi.nasdaq.com/ITCH/Nasdaq%20ITCH/01302020.NASDAQ_ITCH50.gz"
+          ls -l data/
+
+      - name: Decompress (gzip CRC is the integrity check)
+        run: |
+          df -h .
+          gunzip -k data/01302020.NASDAQ_ITCH50.gz
+          ls -l data/
+
+      - name: Build (release, portable flags for CI)
+        env:
+          CC: clang-18
+          CXX: clang++-18
+        run: |
+          cmake --preset release -DCMAKE_CXX_FLAGS_RELEASE="-O2 -DNDEBUG"
+          cmake --build --preset release
+
+      - name: Per-type counts match the pinned day exactly
+        run: |
+          ./build/release/src/tools/itch_count data/01302020.NASDAQ_ITCH50 | tee counts.txt
+          grep -q "total 423285709  (unknown 4251070, malformed 0)" counts.txt
+
+      - name: Slice first hour (dev-loop artifact, deterministic)
+        run: |
+          ./build/release/src/tools/itch_slice data/01302020.NASDAQ_ITCH50 \
+            data/first_hour.itch --until=10:30
+
+      - name: Golden check (flat book vs committed oracle snapshots)
+        run: |
+          ./build/release/src/tools/golden check data/first_hour.itch \
+            tests/goldens/01302020_first_hour.txt \
+            --every=10000000 --top=20 --depth=10
+
+      - name: Full-day differential (flat book vs reference oracle)
+        run: |
+          ./build/release/src/tools/differential data/01302020.NASDAQ_ITCH50
+
+      - name: Execution-at-front audit (§9.3)
+        run: |
+          ./build/release/src/tools/replay data/01302020.NASDAQ_ITCH50 \
+            --threads=1 --audit | tee audit.txt
+          # Threshold set from the measured baseline (98.53% on 01302020;
+          # the gap is dominated by price-improved C executions, which
+          # legitimately hit non-front orders). Fail below 98%.
+          python3 - <<'EOF'
+          import re, sys
+          text = open("audit.txt").read()
+          m = re.search(r"\((\d+\.\d+)% pass\)", text)
+          assert m, "no audit output found"
+          rate = float(m.group(1))
+          print(f"audit pass rate: {rate}%")
+          sys.exit(0 if rate >= 98.0 else 1)
+          EOF

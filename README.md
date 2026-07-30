@@ -14,21 +14,67 @@ milestone plan.
 | ITCH 5.0 parser (S,R,H,A,F,E,C,X,D,U,P,Q), mmap reader, `itch_count` | ✅ |
 | Reference `std::map` book + reconstruct engine (§4.1 subtleties tested) | ✅ |
 | Flat-array book: adaptive bands, shared arena, robin-hood id map with backward-shift deletion | ✅ |
-| Differential test: flat vs reference over hostile synthetic streams | ✅ |
 | SPSC ring (cached indices, batch pop) + two-thread pipeline + `replay` tool | ✅ |
 | Match mode: limit/IOC, price-time priority, property tests | ✅ |
-| Real sample-day replay, golden files, per-type count cross-check | ⏳ needs data download |
-| Bench harness: paced replay, HDR histograms, rdtsc clocks (§8) | ⏳ |
-| Bitmap best-price experiment, execution-at-front audit, fuzz targets | ⏳ |
+| Real sample-day: counts, full-day differential, goldens, audit | ✅ 01302020 |
+| Bench harness: paced replay (coordinated omission addressed), HDR histogram, clock shim | ✅ |
+| Bitmap best-price experiment (correctness + first A/B) | ✅ |
+| Fuzz targets (libFuzzer on Linux; standalone ASan driver locally) | ✅ smoke |
+| Nightly CI: full-day differential + goldens + counts + audit | ✅ workflow |
+| Band re-centring rebase (see finding below), publishable quiet-machine numbers, Linux/x86 canonical run, design-decision chapters, v1.0 | ⏳ |
 
-All correctness work runs under ASan/UBSan and TSan (see presets); the SPSC
-ring's memory-ordering argument is written out in `spsc_ring.hpp`, with the
-TSan stress test as supporting evidence.
+All correctness work runs under ASan/UBSan and TSan; the SPSC ring's
+memory-ordering argument is written out in `spsc_ring.hpp`, with the TSan
+stress test as supporting evidence.
 
-Informal first numbers (M-series laptop, warm cache, synthetic 3.6M-msg
-stream, wall-clock only — honest §8 methodology pending): ~13M msgs/s
-single-thread reconstruct, ~14M msgs/s through the two-thread pipeline,
-identical end-state stats in both modes.
+## Pinned sample day
+
+`01302020.NASDAQ_ITCH50.gz` (5,597,158,940 bytes gz, 12,952,050,754 raw) from
+<https://emi.nasdaq.com/ITCH/Nasdaq%20ITCH/>. The server's `.md5sum` link is
+stale (404); integrity relies on the gzip CRC. Full-day reference counts
+(also asserted nightly in CI): **423,285,709 messages, 0 malformed** —
+A 184,735,355 · D 180,285,101 · U 36,777,372 · E 8,415,610 · X 4,990,972 ·
+F 1,875,350 · P 1,779,727 · C 139,474 · Q 17,835 · H 8,921 · R 8,916 · S 6 ·
+unknown types (I,L,Y,J,K,V) 4,251,070 counted-and-skipped.
+
+## Real-day results so far
+
+**Machine caveat (§8): all numbers below were taken on an M-series laptop
+with a concurrent ~3-core workload running — treat them as lower bounds and
+shape-checks, not publishable measurements. A quiet-machine, multi-run,
+median±spread pass is still to come.**
+
+- Parse-only (`itch_count`, cold single pass): **22.7M msgs/s** — §10 target
+  (>20M warm) already exceeded cold.
+- Full-day differential (flat vs `std::map` oracle, 423.3M msgs, 8,900
+  books): **PASS**, including the observation that both books end the day
+  exactly empty. First-hour differential additionally compares every level's
+  FIFO: **PASS** (8,899 books, 723,605 levels, 1.7M live orders at 10:30).
+- Golden snapshots (first hour, top-20 symbols, 10 levels): oracle-dumped,
+  flat-book-verified, committed under `tests/goldens/`.
+- Execution-at-front audit (§9.3), full day: **98.53%** of 8.44M audited
+  executions hit the FIFO front. Split by type this becomes an explanation,
+  not a blemish: **E (at-price) 99.87%** — price-time priority holds — while
+  C (price-improved) passes only 17.3%, as expected: midpoint/improved
+  prints do not follow displayed-queue priority.
+- Reconstruct throughput, full day: 3.8M msgs/s single-thread, 4.8M msgs/s
+  two-thread pipeline (ring occupancy pegged: consumer-bound). Arena
+  high-water 1.93M live orders (123MB, zero growths); id map max probe 10,
+  zero rehashes.
+- Paced-latency harness runs end to end (60×, first hour, 69M samples):
+  p50 ~2µs but ms-scale tails — dominated by host load plus 60× compression
+  of the opening burst; labelled first-cut, not publishable.
+
+**Finding — band sizing (§5.1 arithmetic, confirmed on real data):** the
+design-doc default (±2048 ticks, 2^17 cap) produced **31GB of level arrays
+and 35% out-of-band ops** — real books carry far-out resting quotes all day,
+and bands anchor on the FIRST add per side, which pre-open is often a junk
+quote ($0.01 bid on a $300 stock) stranding the band far from real trading.
+Retuned defaults (512/8192) run at ~98% of best measured throughput on
+1/16th the memory (1.9GB full-day), but out-of-band remains ~50-80% of ops:
+the real fix is the §5.1 activity-centred rebase, now justified by data and
+next in line. Correctness is unaffected either way (differential-verified in
+both configs; overflow ops are just slower).
 
 ## Goals
 

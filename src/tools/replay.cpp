@@ -123,8 +123,13 @@ int run_single(const ob::itch::MmapFile& file, bool audit, const BandConfig& bc)
     if (audit) {
         const auto& a = auditor.stats();
         std::printf("audit           %llu checked, %llu at front (%.4f%% pass)\n",
-                    static_cast<unsigned long long>(a.checked),
-                    static_cast<unsigned long long>(a.at_front), a.pass_rate() * 100.0);
+                    static_cast<unsigned long long>(a.checked()),
+                    static_cast<unsigned long long>(a.at_front()), a.pass_rate() * 100.0);
+        std::printf("audit by type   E %.4f%% of %llu | C (price-improved) %.4f%% of %llu\n",
+                    a.pass_rate_e() * 100.0,
+                    static_cast<unsigned long long>(a.checked_e),
+                    a.pass_rate_c() * 100.0,
+                    static_cast<unsigned long long>(a.checked_c));
         std::printf("audit skipped   preopen %llu, halted %llu, unknown-ref %llu\n",
                     static_cast<unsigned long long>(a.skipped_preopen),
                     static_cast<unsigned long long>(a.skipped_halted),
@@ -182,6 +187,10 @@ int main(int argc, char** argv) {
             audit = true;
         } else if (std::strcmp(argv[i], "--bitmap") == 0) {
             bc.use_bitmap = true;
+        } else if (std::strncmp(argv[i], "--band-half=", 12) == 0) {
+            bc.initial_half_width = static_cast<std::uint32_t>(std::atoi(argv[i] + 12));
+        } else if (std::strncmp(argv[i], "--band-max=", 11) == 0) {
+            bc.max_width = static_cast<std::uint32_t>(std::atoi(argv[i] + 11));
         } else {
             path = argv[i];
         }

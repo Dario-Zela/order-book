@@ -40,9 +40,17 @@ struct BookResources {
     IdMap<Order*> ids;
 };
 
+// Defaults tuned on the pinned real day (01302020, first-hour slice): the
+// design-doc guess (2048 / 2^17) produced 31GB of levels and 35% overflow —
+// real books carry far-out resting quotes all day, and bands anchor on the
+// FIRST add per side, which pre-open is often a junk quote ($0.01 bid on a
+// $300 stock) that strands the band far from real trading. 512/8192 keeps
+// ~98% of the measured throughput at 1/16th the memory. The real fix is the
+// §5.1 activity-centred rebase — planned, not yet implemented; overflow ops
+// remain correct (differential-verified) but slow.
 struct BandConfig {
-    std::uint32_t initial_half_width = 2048;  // ticks each side of first price
-    std::uint32_t max_width = 1u << 17;       // hard cap; beyond -> overflow map
+    std::uint32_t initial_half_width = 512;  // ticks each side of first price
+    std::uint32_t max_width = 1u << 13;      // hard cap; beyond -> overflow map
     // §5.3 experiment: repair best via the two-level occupancy bitmap
     // (countr/countl_zero) instead of the linear scan. Runtime-selectable so
     // both variants A/B in one binary; correctness is identical (differential

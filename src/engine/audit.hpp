@@ -26,26 +26,38 @@ namespace ob::engine {
 template <typename Inner>
 class FrontAudit : public itch::NullVisitor {
 public:
+    // E and C are tracked separately: E executes at the resting price (book
+    // priority should hold), while C is a price-improved execution — a
+    // midpoint or better print may legitimately hit an order that is NOT at
+    // the front of its displayed level. Separating them turns "1.5% failed"
+    // into an explanation (§9.3: explained exceptions are the deliverable).
     struct Stats {
-        std::uint64_t checked = 0;        // executions audited (market open, trading)
-        std::uint64_t at_front = 0;       // ... of which hit the FIFO front
+        std::uint64_t checked_e = 0;
+        std::uint64_t at_front_e = 0;
+        std::uint64_t checked_c = 0;
+        std::uint64_t at_front_c = 0;
         std::uint64_t skipped_preopen = 0;   // before System Event 'Q' / after 'M'
         std::uint64_t skipped_halted = 0;    // symbol not in state 'T'
         std::uint64_t skipped_unknown = 0;   // ref not in book (mid-stream start)
-        [[nodiscard]] double pass_rate() const {
-            return checked == 0 ? 0.0
-                                : static_cast<double>(at_front) / static_cast<double>(checked);
+        [[nodiscard]] std::uint64_t checked() const { return checked_e + checked_c; }
+        [[nodiscard]] std::uint64_t at_front() const { return at_front_e + at_front_c; }
+        [[nodiscard]] static double rate(std::uint64_t hit, std::uint64_t total) {
+            return total == 0 ? 0.0
+                              : static_cast<double>(hit) / static_cast<double>(total);
         }
+        [[nodiscard]] double pass_rate() const { return rate(at_front(), checked()); }
+        [[nodiscard]] double pass_rate_e() const { return rate(at_front_e, checked_e); }
+        [[nodiscard]] double pass_rate_c() const { return rate(at_front_c, checked_c); }
     };
 
     explicit FrontAudit(Inner& inner) : inner_(inner) {}
 
     void on_order_executed(const itch::OrderExecuted& m) {
-        check(m.h.locate, m.ref);
+        check(m.h.locate, m.ref, stats_.checked_e, stats_.at_front_e);
         inner_.on_order_executed(m);
     }
     void on_order_executed_with_price(const itch::OrderExecutedWithPrice& m) {
-        check(m.h.locate, m.ref);
+        check(m.h.locate, m.ref, stats_.checked_c, stats_.at_front_c);
         inner_.on_order_executed_with_price(m);
     }
 
@@ -63,7 +75,7 @@ public:
     [[nodiscard]] const Stats& stats() const noexcept { return stats_; }
 
 private:
-    void check(StockLocate loc, OrderId ref) {
+    void check(StockLocate loc, OrderId ref, std::uint64_t& checked, std::uint64_t& hit) {
         if (inner_.phase() != MarketPhase::open) {
             ++stats_.skipped_preopen;
             return;
@@ -82,10 +94,10 @@ private:
             ++stats_.skipped_unknown;
             return;
         }
-        ++stats_.checked;
+        ++checked;
         const auto front = book->front_order(snap->side, snap->price);
         if (front && front->ref == ref) {
-            ++stats_.at_front;
+            ++hit;
         }
     }
 

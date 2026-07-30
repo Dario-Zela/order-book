@@ -19,3 +19,4 @@ compile_commands.json
 crash-*
 fuzz-*.log
 corpus/
+data/*.itch
