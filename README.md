@@ -4,8 +4,31 @@ Parses NASDAQ TotalView-ITCH 5.0 binary data, maintains full-depth limit order
 books with price-time priority, and matches synthetic order flow. Two-thread
 pipeline (feed → engine) over a lock-free SPSC ring buffer.
 
-**Status: under construction.** See [docs/DESIGN.md](docs/DESIGN.md) for the
-full design document and milestone plan.
+See [docs/DESIGN.md](docs/DESIGN.md) for the full design document and
+milestone plan.
+
+## Status
+
+| Milestone | State |
+|---|---|
+| ITCH 5.0 parser (S,R,H,A,F,E,C,X,D,U,P,Q), mmap reader, `itch_count` | ✅ |
+| Reference `std::map` book + reconstruct engine (§4.1 subtleties tested) | ✅ |
+| Flat-array book: adaptive bands, shared arena, robin-hood id map with backward-shift deletion | ✅ |
+| Differential test: flat vs reference over hostile synthetic streams | ✅ |
+| SPSC ring (cached indices, batch pop) + two-thread pipeline + `replay` tool | ✅ |
+| Match mode: limit/IOC, price-time priority, property tests | ✅ |
+| Real sample-day replay, golden files, per-type count cross-check | ⏳ needs data download |
+| Bench harness: paced replay, HDR histograms, rdtsc clocks (§8) | ⏳ |
+| Bitmap best-price experiment, execution-at-front audit, fuzz targets | ⏳ |
+
+All correctness work runs under ASan/UBSan and TSan (see presets); the SPSC
+ring's memory-ordering argument is written out in `spsc_ring.hpp`, with the
+TSan stress test as supporting evidence.
+
+Informal first numbers (M-series laptop, warm cache, synthetic 3.6M-msg
+stream, wall-clock only — honest §8 methodology pending): ~13M msgs/s
+single-thread reconstruct, ~14M msgs/s through the two-thread pipeline,
+identical end-state stats in both modes.
 
 ## Goals
 
