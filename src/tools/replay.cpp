@@ -6,6 +6,8 @@
 // Wall-clock msgs/s only — honest latency numbers need the paced-run harness
 // (DESIGN §8; coordinated omission) which lives in bench/, not here.
 
+#include <cstdlib>
+#include <vector>
 #include <atomic>
 #include <chrono>
 #include <cstdint>

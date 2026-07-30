@@ -7,6 +7,7 @@
 // and a save+resume pair are directly comparable. Also unlocks fast golden
 // iteration: snapshot just before the region under study, resume from there.
 
+#include <chrono>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>

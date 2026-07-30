@@ -11,6 +11,7 @@
 // implementation forever after. Symbol selection depends only on the input
 // stream (add counts), so both modes pick identical sets.
 
+#include <cstdlib>
 #include <algorithm>
 #include <cstdint>
 #include <cstdio>

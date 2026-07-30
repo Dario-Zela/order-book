@@ -5,6 +5,7 @@
 //
 //   mold_recv --a-port=6001 --b-port=6002 --rewind=127.0.0.1:6010 [--idle=5]
 
+#include <string>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>

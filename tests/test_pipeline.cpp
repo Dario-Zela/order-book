@@ -2,6 +2,8 @@
 // on another thread must produce books identical to a direct single-thread
 // replay. This is the differential test again, aimed at the event layer.
 
+#include <atomic>
+#include <memory>
 #include <catch2/catch_test_macros.hpp>
 
 #include <thread>

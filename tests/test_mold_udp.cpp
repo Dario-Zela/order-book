@@ -4,6 +4,7 @@
 // into an Engine<RefBook>. Acceptance: the reconstructed book equals a
 // direct replay of the same stream, despite the losses.
 
+#include <string>
 #include <catch2/catch_test_macros.hpp>
 
 #include <atomic>

@@ -2,6 +2,7 @@
 // restoring into a fresh engine, and continuing must be indistinguishable
 // from a straight replay — books (FIFO-exact), counters, phase, halts.
 
+#include <string>
 #include <catch2/catch_test_macros.hpp>
 
 #include <cstdio>

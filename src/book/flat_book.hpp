@@ -14,6 +14,7 @@
 // distribution). Orders come from a shared arena and are found via the
 // shared robin-hood id map (§5.2); both are per-day global resources.
 
+#include <utility>
 #include <algorithm>
 #include <array>
 #include <cstddef>
