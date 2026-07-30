@@ -17,6 +17,7 @@
 #include <thread>
 
 #include "book/flat_book.hpp"
+#include "engine/audit.hpp"
 #include "engine/engine.hpp"
 #include "engine/event.hpp"
 #include "itch/mmap_file.hpp"
@@ -102,15 +103,32 @@ void report(const FlatEngine& eng, const BookResources& res, const ob::itch::Par
                             : 0.0);
 }
 
-int run_single(const ob::itch::MmapFile& file) {
+int run_single(const ob::itch::MmapFile& file, bool audit) {
     BookResources res(kExpectedLiveOrders);
     FlatEngine eng({}, FlatFactory{&res});
     ob::itch::Parser parser(file.bytes());
     const auto t0 = std::chrono::steady_clock::now();
-    const auto msgs = parser.run(eng);
+    std::uint64_t msgs = 0;
+    ob::engine::FrontAudit<FlatEngine> auditor(eng);
+    if (audit) {
+        msgs = parser.run(auditor);
+    } else {
+        msgs = parser.run(eng);
+    }
     const auto t1 = std::chrono::steady_clock::now();
     report(eng, res, parser, msgs, std::chrono::duration<double>(t1 - t0).count());
-    std::printf("mode            single-thread baseline\n");
+    std::printf("mode            single-thread baseline%s\n",
+                audit ? " + execution-at-front audit" : "");
+    if (audit) {
+        const auto& a = auditor.stats();
+        std::printf("audit           %llu checked, %llu at front (%.4f%% pass)\n",
+                    static_cast<unsigned long long>(a.checked),
+                    static_cast<unsigned long long>(a.at_front), a.pass_rate() * 100.0);
+        std::printf("audit skipped   preopen %llu, halted %llu, unknown-ref %llu\n",
+                    static_cast<unsigned long long>(a.skipped_preopen),
+                    static_cast<unsigned long long>(a.skipped_halted),
+                    static_cast<unsigned long long>(a.skipped_unknown));
+    }
     return 0;
 }
 
@@ -154,20 +172,25 @@ int run_piped(const ob::itch::MmapFile& file) {
 int main(int argc, char** argv) {
     const char* path = nullptr;
     int threads = 2;
+    bool audit = false;
     for (int i = 1; i < argc; ++i) {
         if (std::strncmp(argv[i], "--threads=", 10) == 0) {
             threads = std::atoi(argv[i] + 10);
+        } else if (std::strcmp(argv[i], "--audit") == 0) {
+            audit = true;
         } else {
             path = argv[i];
         }
     }
-    if (path == nullptr || (threads != 1 && threads != 2)) {
-        std::fprintf(stderr, "usage: %s <itch-file> [--threads=1|2]\n", argv[0]);
+    if (path == nullptr || (threads != 1 && threads != 2) || (audit && threads != 1)) {
+        std::fprintf(stderr, "usage: %s <itch-file> [--threads=1|2] [--audit]\n"
+                             "       (--audit implies --threads=1)\n",
+                     argv[0]);
         return 2;
     }
     try {
         const ob::itch::MmapFile file(path);
-        return threads == 1 ? run_single(file) : run_piped(file);
+        return threads == 1 ? run_single(file, audit) : run_piped(file);
     } catch (const std::exception& e) {
         std::fprintf(stderr, "error: %s\n", e.what());
         return 1;
