@@ -56,10 +56,14 @@ beat `std::map` because prices cluster near the touch. Real data agreed —
 and then punished the naive sizing. My first configuration allocated **31GB
 of price-level arrays**, because bands anchor on each side's *first* order,
 and pre-open that's often a $0.01 bid on a $300 stock, stranding the band
-miles from actual trading. Retuning got the same throughput in 1.9GB, but
-the deeper fix (re-centring bands on actual activity) is queued next — the
-measurement made the design decision for me, which is exactly how I wanted
-this project to work.
+miles from actual trading. Retuning got the same throughput in 1.9GB, and
+the deeper fix — re-centring bands on actual activity — then shipped as the
+dominance-gated rebase: +54% full-day throughput on top of the retune. (Its
+first version re-anchored onto the junk quotes themselves and thrashed;
+the gate that fixed it is documented in the code.) The residual overflow
+traffic is a property of real quote ranges, which span more dollars than
+any cache-friendly band can cover. The measurement made the design
+decisions for me, which is exactly how I wanted this project to work.
 
 Latency methodology matters as much as latency numbers. Throughput runs and
 latency runs are separate modes that answer different questions; the paced
@@ -68,6 +72,28 @@ charged to every message they delay (Gil Tene's coordinated-omission
 argument). The numbers published so far were taken on a busy laptop and are
 labelled as such — the quiet-machine pass is on the roadmap, and I'd rather
 publish honest lower bounds than pretty lies.
+
+### So what are the latencies?
+
+Paced-mode replay of the real first hour (93.3M messages, 69.2M paced
+samples after the market-open arm and 5s warmup discard), event time
+compressed 60×, ingress stamped at *intended* arrival — so these tails
+include every stall the pipeline caused, plus the 60×-compressed opening
+burst, plus whatever else the laptop was doing. Latency = intended ingress
+→ book updated. Clock overhead ~8ns/read.
+
+| ns | p50 | p90 | p99 | p99.9 | max |
+|---|---|---|---|---|---|
+| single-thread | 1,311 | 417,791 | 7,077,887 | 34,603,007 | 39,280,411 |
+| 2-thread SPSC pipeline | 1,375 | 303,103 | 8,650,751 | 27,262,975 | 32,213,523 |
+
+Read them for what they are: the p50 says the book-apply path is ~1.3µs
+under paced load on a loaded laptop; the p90+ says a 60×-compressed open
+on shared hardware queues for milliseconds — which the intended-arrival
+stamping refuses to hide. The design targets (p50 < 100ns service time,
+p99 < 1µs paced) are claims for the quiet-machine, bare-metal pass, not
+for this environment; publishing the honest tail now beats curating a
+prettier one.
 
 ## Building and running
 
@@ -128,9 +154,11 @@ spare, and identical volumes to the single-thread run.
 ## The experiments, run
 
 Every design decision the doc flagged as "measure, don't assert" got its
-measurement. All numbers from the same busy M-series laptop, interleaved
-A/B where comparison matters (which cancels drift); absolute values are
-lower bounds, relative ones are trustworthy.
+measurement. Hardware, per the doc's own rules: **Apple M4 Pro, 48GB,
+macOS 26.5.2, Apple clang 21.0.0, `-O3 -march=native`, mains power,
+concurrent background load present and varying** — interleaved A/B where
+comparison matters (which cancels drift); absolute values are lower
+bounds, relative ones are trustworthy.
 
 | Experiment | Result | Verdict |
 |---|---|---|

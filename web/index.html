@@ -319,7 +319,7 @@ footer .sig{margin-top:.6rem}
     <tr><td>Order 64B alignas vs packed 40B</td><td class="num">±0.6%</td><td>interleaved A/B: a wash — measured, not asserted (§5.2)</td></tr>
     <tr><td>Id-map find, replay-realistic keys</td><td class="num ok">11.8 ns</td><td>google-benchmark, DoNotOptimize, churned-sequential keys</td></tr>
     <tr><td>Clock overhead (bounds all latency claims)</td><td class="num">~8 ns/read</td><td>measured, printed beside every histogram</td></tr>
-    <tr><td>Paced-latency p50 (60×, first hour)</td><td class="num">~2 µs</td><td>coordinated-omission-corrected · tails host-load-dominated · labelled first-cut</td></tr>
+    <tr><td>Paced-latency p50 / p99 (60×, first hour, 2-thread)</td><td class="num">1.4 µs / 8.7 ms</td><td>coordinated-omission-corrected · intended-arrival stamping · tails include the 60×-compressed open + host load · M4 Pro, loaded</td></tr>
   </table>
   <p class="note">The quiet-machine, multi-run, median±spread pass — and a canonical
   Linux/x86 run with rdtsc — are on the roadmap. Honest lower bounds now beat pretty
@@ -371,13 +371,13 @@ footer .sig{margin-top:.6rem}
 <section>
   <div class="sec-head"><span class="idx">06</span><h2>Verification ledger</h2></div>
   <ul class="plain">
-    <li class="done">95 tests across debug / release / ASan+UBSan / TSan presets</li>
+    <li class="done">116 tests across debug / release / ASan+UBSan / TSan presets</li>
     <li class="done">Full-day differential vs the reference oracle — every price level, every FIFO, 8,900 symbols; both books end the day exactly empty</li>
     <li class="done">Golden L2 snapshots: oracle-dumped, flat-book-verified, committed</li>
     <li class="done">Execution-at-front audit with categorised exceptions (98.53% overall, 99.87% at-price)</li>
     <li class="done">SPSC stress: 2M-op randomised-stall runs under TSan, strict FIFO + checksums</li>
     <li class="done">Fuzz targets: parser never-crash accounting + hostile op streams driven into both books with an inline differential</li>
-    <li class="done">Nightly CI replays the entire pinned day: exact counts, goldens, differential, audit threshold — identical results on macOS/arm64 and Linux/x86</li>
+    <li class="done">Nightly CI (Linux) replays the entire pinned day: exact counts, goldens, differential, audit threshold; local macOS/arm64 runs reproduce the same counts and audit pass rate to the fourth decimal</li>
   </ul>
 </section>
 
