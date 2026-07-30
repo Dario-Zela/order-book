@@ -34,3 +34,8 @@ endif()
 if(OB_BUILD_BENCH)
   add_subdirectory(src/bench)
 endif()
+
+option(OB_BUILD_FUZZ "Build fuzz targets" OFF)
+if(OB_BUILD_FUZZ)
+  add_subdirectory(fuzz)
+endif()
