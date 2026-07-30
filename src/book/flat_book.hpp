@@ -15,6 +15,7 @@
 // shared robin-hood id map (§5.2); both are per-day global resources.
 
 #include <algorithm>
+#include <array>
 #include <cstddef>
 #include <cstdint>
 #include <map>
@@ -45,9 +46,10 @@ struct BookResources {
 // real books carry far-out resting quotes all day, and bands anchor on the
 // FIRST add per side, which pre-open is often a junk quote ($0.01 bid on a
 // $300 stock) that strands the band far from real trading. 512/8192 keeps
-// ~98% of the measured throughput at 1/16th the memory. The real fix is the
-// §5.1 activity-centred rebase — planned, not yet implemented; overflow ops
-// remain correct (differential-verified) but slow.
+// ~98% of the measured throughput at 1/16th the memory, and the §5.1
+// activity-centred rebase (below) re-anchors junk-anchored bands — measured
+// +54% on the full day. Overflow ops remain correct either way
+// (differential-verified) — just slower.
 struct BandConfig {
     std::uint32_t initial_half_width = 512;  // ticks each side of first price
     std::uint32_t max_width = 1u << 13;      // hard cap; beyond -> overflow map
